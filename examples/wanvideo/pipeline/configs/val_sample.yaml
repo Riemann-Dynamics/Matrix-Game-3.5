@@ -1,0 +1,522 @@
+# =============================================================================
+# Wan2.2 TI2V-5B Mosaic 训练配置示例
+# -----------------------------------------------------------------------------
+# 阅读约定：
+#   * 本次改动只对选项做了「分组 + 详细说明」，没有改动任何取值。
+#   * 被注释掉的选项表示「次要 / 直接用默认值即可」，需要时取消注释再改。
+#   * 每个 key 与 train_mosaic.py(argparse) 的 dest 名称一一对应；
+#     YAML 里的值会覆盖 argparse 默认值，命令行显式参数再覆盖 YAML 的值。
+#   * omegaconf_config(--config)：可选的外部 OmegaConf YAML 路径；一般不写在本文件里，
+#     而是用命令行 --config 指向本文件，故此处保持注释。
+# =============================================================================
+# omegaconf_config: null
+
+
+# =============================================================================
+# 组 1] 训练主循环与优化器
+# 控制总训练时长、优化器超参与全局随机种子，是最常调的核心参数。
+#   - learning_rate / weight_decay：AdamW 的学习率与权重衰减。
+#   - num_epochs / steps_per_epoch：训练 epoch 数，以及单个 epoch 的步数
+#     （实际每卡步数 = steps_per_epoch / 卡数）。
+#   - seed：所有「每样本随机性」推导的根种子，决定数据序列、mosaic 模式抽样等。
+#   - find_unused_parameters / task：DDP 是否查找未用参数、任务类型(sft)，一般默认。
+# =============================================================================
+learning_rate: 0.00001
+num_epochs: 0
+steps_per_epoch: 1000 # 一个epoch多少步，实际部署是这个数字/卡数
+seed: 42
+# weight_decay: 0.01
+# find_unused_parameters: false
+# task: sft
+
+
+# =============================================================================
+# 组 2] 输出目录与 checkpoint 保存
+# 决定日志/权重写到哪里、保存频率，以及导出权重时去掉的前缀。
+#   - output_path：所有 run 的根目录，每个 run 会在下面建带日期时间的子目录。
+#   - log_dir_name：覆盖自动时间戳目录名，多机训练时由外层脚本传同一个名字。
+#   - save_steps：按步保存的间隔；None 表示只在每个 epoch 末尾保存。
+#   - remove_prefix_in_ckpt：导出 ckpt 时剥掉的 state_dict 前缀(pipe.dit.)。
+# =============================================================================
+output_path: ./logs # 输出目录
+log_dir_name: null
+remove_prefix_in_ckpt: pipe.dit.
+# save_steps: null
+
+
+# =============================================================================
+# 组 3] 断点续训与权重热启动
+# 控制从哪里恢复训练。优先级：resume_from > trained_dit。
+#   - resume_from：传入之前 run 的 log 目录(带日期时间)，会自动读 train_state.json
+#     恢复 (start_epoch, dataset_pass_id)，并自动挑最新 epoch-*.safetensors 作为
+#     trained_dit；同时 dataset_pass_id 自增 1，使续训数据序列与原 run 可复现但不重叠。
+#   - trained_dit：直接指定一个已训练 DIT 权重作为热启动起点。
+#   - dataset_pass_id：折进每个样本种子；同 (seed, pass_id) → 同数据序列。
+#   - loose_model_loading：允许基础模型加载忽略 ckpt 中多余 key（仍要求目标 key/shape 匹配）；
+#     不影响 trained_dit（它始终严格加载）。
+# =============================================================================
+resume_from: null # 这两个选项确定从哪里恢复训练，优先级resume_from > trained_dit
+# resume from传入的是之前训练log的目录(带日期时间的)，会自动读最新的safetensors
+trained_dit: null # 这两个选项确定从哪里恢复训练，优先级resume_from > trained_dit
+loose_model_loading: false
+# dataset_pass_id: null
+
+
+# =============================================================================
+# 组 4] 基础模型加载
+# 指定要加载/训练的模型权重、可训练子模块以及分词器等。
+#   - model_id_with_origin_paths：以「仓库ID:文件通配」形式列出要加载的权重
+#     (DIT / T5 文本编码器 / VAE)，逗号分隔。
+#   - model_paths：另一种以 JSON 指定本地权重路径的方式(与上者二选一)。
+#   - trainable_models：哪些子模块参与训练，这里只训 dit。
+#   - extra_inputs / fp8_models / offload_models：额外输入、FP8 精度、显存 offload 的模型列表。
+#   - tokenizer_path / audio_processor_path：文本分词器、音频处理器路径。
+#   - initialize_model_on_cpu：先在 CPU 上初始化模型(省显存峰值)。
+# =============================================================================
+# model_paths: null
+model_id_with_origin_paths: "Wan-AI/Wan2.2-TI2V-5B:diffusion_pytorch_model*.safetensors,Wan-AI/Wan2.2-TI2V-5B:models_t5_umt5-xxl-enc-bf16.pth,Wan-AI/Wan2.2-TI2V-5B:Wan2.2_VAE.pth"
+# extra_inputs: null
+# fp8_models: null
+# offload_models: null
+trainable_models: "dit"
+tokenizer_path: models/Wan-AI/Wan2.1-T2V-1.3B/google/umt5-xxl
+# audio_processor_path: null
+# initialize_model_on_cpu: false
+
+
+# =============================================================================
+# 组 5] LoRA 与模板模型（本示例为全参微调，故全部默认关闭）
+# 仅在做 LoRA 微调时才需要打开这些选项。
+#   - lora_base_model / lora_target_modules / lora_rank：LoRA 挂在哪个模型、哪些层、秩多大。
+#   - lora_checkpoint：从已有 LoRA 续训。
+#   - preset_lora_path / preset_lora_model：把一个预置 LoRA 融进基础模型后再训。
+#   - template_model_id_or_path / enable_lora_hot_loading：模板模型与 LoRA 热加载(仅 image-to-lora)。
+# =============================================================================
+# lora_base_model: null
+# lora_target_modules: q,k,v,o,ffn.0,ffn.2
+# lora_rank: 32
+# lora_checkpoint: null
+# preset_lora_path: null
+# preset_lora_model: null
+# template_model_id_or_path: null
+# enable_lora_hot_loading: false
+
+
+# =============================================================================
+# 组 6] 显存优化 / 梯度检查点
+# 用计算换显存，以及梯度累积来放大等效 batch。
+#   - use_gradient_checkpointing：开启梯度检查点(省显存、稍慢)。
+#   - use_gradient_checkpointing_offload：把检查点激活 offload 到 CPU 内存(更省显存、更慢)。
+#   - gradient_accumulation_steps：梯度累积步数(等效放大 batch size)。
+# =============================================================================
+use_gradient_checkpointing: true
+use_gradient_checkpointing_offload: false
+gradient_accumulation_steps: 1
+
+
+# =============================================================================
+# 组 7] 分辨率 / 帧数 / 采样窗口 / 噪声区间
+# 决定单个训练样本的空间分辨率、时间长度与扩散 timestep 采样范围。
+#   - height / width：训练/推理分辨率；留空可启用动态分辨率。
+#   - max_pixels：动态分辨率下每帧最大像素数。
+#   - num_frames：每条视频采样的帧数(从视频前缀采样)。
+#   - latent_window_size：每个样本预测多少 latent 帧(时间窗口长度)。
+#   - max_timestep_boundary / min_timestep_boundary：扩散 timestep 采样的上下界。
+# =============================================================================
+height: 704
+width: 1280
+# max_pixels: 1048576
+# num_frames: null
+latent_window_size: 21 # 训练/测试时每个样本的预测多少latent帧
+# max_timestep_boundary: 1.0
+# min_timestep_boundary: 0.0
+
+
+# =============================================================================
+# 组 8] 数据集来源与读取
+# 指定数据集类型、索引来源以及 DataLoader 的并发/预取。
+#   - dataset_type：严格模式只支持 da3_video，数据/相机/深度/prompt 全部来自 sqlite 索引。
+#   - dataset_index_path / val_dataset_index_path：训练/验证用的预扫描 SQLite 索引
+#     (推荐先用 sqlite build 好再传入)。
+#   - dataset_base_path / dataset_metadata_path / dataset_repeat / data_file_keys：
+#     旧式 metadata 数据流参数，da3_video 下基本不用。
+#   - dataset_num_workers / dataset_prefetch_factor：DataLoader 进程数与预取因子
+#     (workers>0 时 prefetch 默认等于 workers 数)。
+# =============================================================================
+dataset_type: da3_video
+dataset_index_path: null # 推荐数据集用sqlitebuild之后在这里传入
+val_dataset_index_path: null # 如果单独编了val集合可以在这里传入
+# dataset_base_path: ''
+# dataset_metadata_path: null
+# dataset_repeat: 1
+# data_file_keys: image,video
+dataset_num_workers: 0
+dataset_prefetch_factor: null
+
+
+# =============================================================================
+# 组 9] 数据集 / latent 缓存
+# 跨 epoch、跨 run 复用扫描结果与已编码 latent，省去重复扫描与 VAE 编码。
+#   - dataset_cache_dir / no_dataset_cache：数据集扫描信息缓存目录及其总开关。
+#   - memory_latent_cache_dir：逐帧 memory-latent 缓存根目录(命中即跳过 MP4 读取+VAE 编码)。
+#   - memory_latent_cache_version：折进缓存哈希的版本串；VAE 权重/缩放规则变化时改它即可整体失效。
+# =============================================================================
+dataset_cache_dir: ./.cache/dataset_cache
+no_dataset_cache: false
+memory_latent_cache_dir: ./.cache/memory_latents
+memory_latent_cache_version: wan2.2_ti2v_5b_vae_704p
+
+
+# =============================================================================
+# 组 10] 数据集筛选 / 平衡 / 训练验证划分
+# 控制 train/val 切分比例、白名单/黑名单、数据上限及多 root 采样平衡。
+#   - val_ratio：从训练集中划出的验证比例。
+#   - val_assign_yaml / filter_yaml / include_yaml：验证指派、过滤、白名单 YAML。
+#   - max_data_items / max_scan_items / min_frame_count / max_frames_per_scene：
+#     数据条数上限、扫描上限、最短帧数过滤、单场景截断(多为调试用)。
+#   - dataset_compact_mode：兼容缺少 depth 元数据的旧索引。
+#   - dataset_balance_mode / dataset_balance_root_probs：跨 camera_root 的采样平衡策略与手动百分比。
+# =============================================================================
+val_ratio: 0.005
+# val_assign_yaml: null
+# filter_yaml: null
+# include_yaml: null
+# max_data_items: null
+# max_scan_items: null
+# min_frame_count: null
+# max_frames_per_scene: null
+dataset_compact_mode: false
+dataset_balance_mode: global
+dataset_balance_root_probs: ""
+
+
+# =============================================================================
+# 组 11] Prompt / caption 处理
+# 控制 caption 来源、缺失 prompt 的处理与训练时的 prompt dropout。
+#   - vipe_default_prompt / vipe_prompt_path / loose_prompt_match：旧式 VIPE caption 参数，
+#     严格 da3_video sqlite 模式下被忽略(prompt 路径只来自 sqlite)。
+#   - vipe_prompt_type：caption 组合方式；2 表示把 detailed.start 拼到 detailed.dynamic 前。
+#   - allow_no_prompt：允许保留没有 caption 的场景(否则按 no_prompt 丢弃)。
+#   - train_prompt_dropout_prob：训练时以该概率把 prompt 置空(做 CFG dropout)。
+# =============================================================================
+# vipe_default_prompt: ''
+# vipe_prompt_path: ''
+vipe_prompt_type: 2
+allow_no_prompt: false
+# loose_prompt_match: false
+train_prompt_dropout_prob: 0.0
+
+
+# =============================================================================
+# 组 12] 数据预览与训练前健全性检查
+# 在正式训练前检查数据/模型是否有明显问题。
+#   - preview_dataset / num_preview：首个 epoch 把前 num_preview 个样本可视化出来检查数据。
+#   - run_sanity_check：训练前先跑一次 validation，确认模型不会立刻崩。
+# =============================================================================
+preview_dataset: true # 第一个epoch的前num_preview个样本会被可视化来查看数据集是不是有问题
+num_preview: 3
+run_sanity_check: false # 训练前先跑一个validation，检查模型有没有明显问题
+
+
+# =============================================================================
+# 组 13] anchor / context 计划（v2，与 train_sample.yaml 同步）
+# 两个正交轴取代旧 A/B/C 模式；anchor 永远与生成目标「联合编码」，context 帧
+# 永远独立编码并带相对 3D RoPE/相机。
+#   - train_anchor_block_prob：每步抽到「4帧块 anchor」的概率（否则单帧 anchor）。
+#   - train_block_anchor_frames：块 anchor 编码组总帧数（4k+1）。
+#   - train_context_count_max：每步 context 块数上限（[0,max] 均匀抽）；0=关闭。
+#   - train_context_selection：context 候选选取方式(oldest_spread|recent)。
+# 旧值等价换算：vae_clean_context_mode_ratio "2:8" → block_prob 0.8；
+# train_clean_latent_history_count_max 4 → context_max 3。
+# =============================================================================
+train_anchor_block_prob: 0.8
+train_block_anchor_frames: 13
+train_context_count_max: 3
+train_context_selection: oldest_spread
+vae_clean_context_blocks_max: 2            # 训练侧已无效（恒为0）；val 数据集仍读取，保持原值
+# vae_clean_context_mode_ratio: "2:8"      # 已弃用：仅作 train_anchor_block_prob 回退推导
+# train_clean_latent_history_count_max: 4  # 已弃用：仅作 train_context_count_max 回退推导
+# random_start_latent_prob: 0.0
+
+
+# =============================================================================
+# 组 14] 相机 / 深度输入
+# 提供外参/深度来源；da3_video 训练要求预计算深度。
+#   - camera_params_path：DA3 相机参数 npy 目录。
+#   - force_override_extrinsic：仅验证用，强制用指定文件/目录里的外参覆盖。
+#   - depth_path：预计算深度 npz 目录。
+#   - framewise_decoding：逐帧解码开关。
+# =============================================================================
+# camera_params_path: null
+# force_override_extrinsic: null
+# depth_path: null
+# framewise_decoding: false
+
+
+# =============================================================================
+# 组 15] PRoPE 相机位姿控制
+# 把相机外参注入注意力，让模型按相机轨迹生成。
+#   - use_prope：开启 PRoPE 相机条件自注意力。
+#   - prope_attention_interval：每隔几个 DiT block 启用 PRoPE(1=每块都用)。
+#   - prope_disable_t_rope：PRoPE block 内只关闭时间轴 RoPE、保留 x/y RoPE，
+#     跨帧寻址交给相机矩阵；要求 prope_attention_interval > 1，且与
+#     prope_disable_native_rope 互斥。默认 false。
+#   - prope_camera_layout：head_dim 相机铺法。'full'=旧版，相机摊满全部维度
+#     (和 x/y-RoPE 重叠)；'sf13'=只取第2、第4子帧({1,3})，各写成一个连续
+#     16 维块放进 t-band 前段，干净无纠缠；'sf13' 要求 prope_disable_t_rope。
+#   - only_prope：只做相机/PRoPE 控制，关闭 mosaic latent 条件。
+#   - trans_scale：外参平移归一化。数值=沿用线性除法(w2c 平移除以它，
+#     需匹配数据集尺度)；字符串 "log"/"tanh"=保方向的径向压缩
+#     (||t||->log1p(||t||) 或 tanh(||t||))，小位移近似恒等、大位移被压缩。
+# =============================================================================
+use_prope: true
+prope_attention_interval: 1
+prope_disable_t_rope: false
+prope_camera_layout: full
+only_prope: false
+trans_scale: 50.0
+
+
+# =============================================================================
+# 组 16] Mosaic 主开关与逐步调度
+# Mosaic = 把历史帧 warp/拼贴成「记忆」latent 作为条件。本组控制总开关与每步模式调度。
+#   - enable_mosaic：mosaic latent 条件总开关。
+#   - mosaic_train_random_schedule：开启逐步、跨 DDP 同步的 mosaic 模式调度(打开 442 方案)。
+#   - mosaic_train_schedule：调度权重，如 interval3:0,interval1:9,nomosaic:1。
+#   - mosaic_schedule_sync_mode：各 rank 如何同步该选择(seed=按种子各自算，零通信)。
+#   - mosaic_interval：每隔几块保留一个 mosaic 条件 latent(1=稠密)。
+#   - mosaic_no_mosaic_sync_mode / mosaic_sequence_balance_mode：no-mosaic 决策同步、
+#     变长序列处理策略(当前多为占位/profile_only)。
+#   - no_mosaic_prob_train：训练时以该概率跳过整步 mosaic 条件。
+# =============================================================================
+enable_mosaic: true
+mosaic_train_random_schedule: true # 为True打开442
+mosaic_train_schedule: interval3:0,interval1:9,nomosaic:1
+mosaic_schedule_sync_mode: seed
+mosaic_interval: 1
+mosaic_no_mosaic_sync_mode: none
+mosaic_sequence_balance_mode: profile_only
+no_mosaic_prob_train: 0.0
+
+
+# =============================================================================
+# 组 17] Mosaic 的 RoPE 与融合行为
+# 控制 mosaic token 的位置编码、cross-attn 处理与融合粒度/模式。
+#   - mosaic_use_revgrid_rope：mosaic 帧用分数级 spatial RoPE(默认复用噪声帧整数 RoPE)。
+#   - mosaic_view_change_prope：给 mosaic/source token 启用可选的视角变化 PRoPE。
+#   - mosaic_drop_holes：真正 index_select 丢掉空洞 token(缩短序列、提速)，而非仅置零。
+#   - mosaic_fuse_block_size：融合空间块大小(2=与 patch_embedding 对齐的 2x2 块融合)。
+#   - mosaic_return_source_frame_ids：额外输出每 patch 的源帧 id 网格(诊断用)。
+#   - mosaic_fuse_mode：验证时的融合模式。
+#   - mosaic_fuse_mode_train：训练时的融合模式(random=每次在两种间均匀采样)。
+#   (mosaic_skip_cross_attn 已删除：从未生效的预留项，CLI 仅保留 no-op 兼容旧配置)
+# =============================================================================
+mosaic_use_revgrid_rope: false
+mosaic_view_change_prope: false
+mosaic_drop_holes: true
+mosaic_fuse_block_size: 2
+mosaic_return_source_frame_ids: false
+mosaic_fuse_mode: fill_stop_zbuffer
+mosaic_fuse_mode_train: random
+
+
+# =============================================================================
+# 组 18] recent_first_smooth 融合后端与候选预算
+# 针对 recent_first 融合(v40)的精修、后端、设备与每查询组候选数。
+#   - recent_first_photo_refine：v40 光度边界精修(需 RGB memory 帧)。
+#   - recent_first_dedupe_tiles：源 tile 去重(注意本文件显式设为 false)。
+#   - recent_first_geometry_device / recent_first_backend：候选几何计算设备与后端(legacy/gpu_fast)。
+#   - recent_first_warp_dtype / recent_first_enable_tf32：gpu_fast 前向 warp 的 matmul dtype 与 TF32。
+#   - recent_first_zbuffer：允许非最近候选在深度更近时覆盖最近帧像素。
+#   - recent_first_n_candidates_keyframe / recent_first_keyframe_neighbour_window：
+#     额外位姿关键帧候选数及其时间邻域窗口。
+#   - candidates_per_query_group_val / candidates_per_query_group_train：
+#     验证/训练时每个查询组的候选预算(分别独立控制)。
+# =============================================================================
+recent_first_photo_refine: false
+recent_first_dedupe_tiles: false
+recent_first_geometry_device: cuda
+recent_first_backend: legacy
+recent_first_warp_dtype: none
+recent_first_enable_tf32: false
+recent_first_zbuffer: false
+recent_first_n_candidates_keyframe: 0
+recent_first_keyframe_neighbour_window: 2
+candidates_per_query_group_val: 5
+candidates_per_query_group_train: 5
+
+
+# =============================================================================
+# 组 19] Mosaic 候选选择 / NMS / 参考帧
+# 控制 FrustumHandler 如何从历史帧中挑选候选，以及候选去重(NMS)。
+#   - mosaic_selection_mode：候选选择模式(pose_nearest=按位姿最近，跳过投影 IoU 打分)。
+#   - mosaic_candidate_nms_mode：候选 NMS 模式(none/temporal/pose/projection_iou)。
+#   - mosaic_candidate_nms_projection_iou_threshold：projection_iou 模式的投影框 IoU 阈值。
+#   - mosaic_candidate_nms_min_temporal_gap：temporal 模式的最小帧 id 间隔。
+#   - mosaic_candidate_nms_pose_distance_threshold：pose 模式的相机中心距离阈值。
+#   - mosaic_candidate_nms_pool_multiplier：启用 NMS 时的粗候选池放大倍数。
+#   - mosaic_query_reference_frame：每 4 帧查询组里用作代表位姿/K 的帧(1-based)。
+# =============================================================================
+mosaic_selection_mode: pose_nearest
+mosaic_candidate_nms_mode: pose
+mosaic_candidate_nms_projection_iou_threshold: 0.7
+mosaic_candidate_nms_min_temporal_gap: 0
+mosaic_candidate_nms_pose_distance_threshold: 0.1
+mosaic_candidate_nms_pool_multiplier: 2.0
+mosaic_query_reference_frame: 4
+
+
+# =============================================================================
+# 组 20] 相机内参(K)模式
+# 决定 frustum 计算时每帧使用哪种内参。
+#   - train_mosaic_intrinsics_mode：训练内参模式
+#     (per_frame=各帧自己的 K；episode_mean=整段平均；first_frame=复用第 0 帧 K)。
+#   - validation_mosaic_intrinsics_mode：验证内参模式(语义同上)。
+# =============================================================================
+train_mosaic_intrinsics_mode: episode_mean
+validation_mosaic_intrinsics_mode: first_frame
+
+
+# =============================================================================
+# 组 21] Memory 帧 VAE 编码 / 邻域窗口
+# 控制每个 memory 槽位喂给 VAE 的帧数，以及是否用真实时间邻域来加密 latent。
+#   - memory_vae_encode_input_frames：每个 cache-miss memory 槽喂给 VAE 的帧数(需满足 1+4k)。
+#   - memory_neighbor_window_train / _val：训练/验证时对候选 memory 帧编码真实时间邻域窗口
+#     (相机运动过大时回退到单帧稀疏编码)。
+#   - memory_neighbor_window_max_trans_m / _max_rot_deg：上述邻域窗口允许的最大平移(米)/旋转(度)。
+#   - force_using_input_extrinics：仅验证用，向 FrustumHandler 直接给数据集外参/内参，
+#     而非让 DA3 从渲染 RGB 重新恢复，避免逐段重推导致的漂移。
+# =============================================================================
+memory_vae_encode_input_frames: 1
+memory_neighbor_window_train: false
+memory_neighbor_window_val: false
+memory_neighbor_window_max_trans_m: 0.5
+memory_neighbor_window_max_rot_deg: 10.0
+force_using_input_extrinics: true
+#   - registration_estimator：注册新生成帧时的深度/位姿估计器。
+#     'da3'(默认)=DepthAnything-3 nested metric；'vggt_omega_metric'=VGGT-Omega
+#     深度/位姿 + 借 DA3 metric 分支恢复全局尺度（额外加载 VGGT-Omega 与 DA3 metric 分支）。
+#     force_using_input_extrinics=true 时仅取其 metric 深度。
+#   - vggt_omega_ckpt：vggt_omega_metric 权重（$VGGT_OMEGA_CKPT 优先覆盖之；
+#     相对路径按仓库根解析，可从任意工作目录启动）；
+#     DA3 metric 分支复用标准 DA3 权重（$DA3_MODEL_PATH / $DA3_MODEL_ID）。
+registration_estimator: da3
+vggt_omega_ckpt: runjia.qian/huggingface_models/VGGT-Omega/vggt_omega_1b_512.pt
+vggt_omega_image_resolution: 512
+vggt_omega_da3_process_res: 504
+
+
+# =============================================================================
+# 组 22] Validation 主流程
+# 控制何时验证、跑多少样本/segment、采样与 CFG 等推理设置。
+#   - run_validation / validation_interval：是否验证、每隔几个 epoch 验证一次。
+#   - num_val_batches / num_validation_blocks：验证 batch 数、每次跑多少 validation segment。
+#   - validation_sample_offset / validation_rotate_samples：验证起始偏移与是否随 epoch 轮换样本。
+#   - validation_manifest_path / _exclude_path：用 manifest 固定/排除验证样本。
+#   - validation_seed / val_dataset_path_shuffle_seed：验证随机种子与验证集路径洗牌种子。
+#   - validation_num_inference_steps / validation_cfg_scale：验证推理步数与 CFG 强度。
+#   - validation_negative_no_prope / validation_negative_no_context / validation_negative_prompt：
+#     CFG 负分支是否关 PRoPE、是否只给最近一个 clean context、负向提示词。
+#   - validation_use_decoded_first_image：首帧是否走 VAE 解码再喂入(默认直接喂干净 latent，更快)。
+#   - validation_clean_latent_history_count / validation_clean_latent_pool_history*：
+#     多段验证时给后续 section 的 clean latent history 数量、候选池/segment 覆盖选择和 RoPE index 策略。
+#     selection_mode 可用 recent / oldest_spread / segment_coverage；segment_coverage 会从完整历史
+#     中按当前 segment 的相机覆盖选多样 context，不做昂贵的逐候选投影 IoU。
+#   - vae_decode_tiled：预览/验证是否用分块 VAE 解码(省显存但更慢)。
+# =============================================================================
+run_validation: true
+validation_interval: 1
+num_val_batches: 1
+num_validation_blocks: 3 # sanity check & validation 时跑多少validation segment
+validation_sample_offset: 0
+validation_rotate_samples: false
+# validation_manifest_path: null
+# validation_manifest_exclude_path: null
+validation_seed: 3407
+val_dataset_path_shuffle_seed: 42
+validation_num_inference_steps: 25
+validation_cfg_scale: 5.0
+validation_negative_no_prope: false
+validation_negative_no_context: false
+validation_negative_prompt: 色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，三条腿，背景人很多，倒着走
+validation_use_decoded_first_image: false
+validation_clean_latent_history_count: 1
+validation_clean_latent_pool_history: false
+validation_clean_latent_pool_history_selection_mode: segment_coverage
+validation_clean_latent_pool_history_bias: 1
+validation_clean_latent_pool_history_rope_original_indices: false
+vae_decode_tiled: false
+
+
+# =============================================================================
+# 组 23] 验证用 Qwen/VLM 自动 prompt
+# 验证时用视觉语言模型自动生成分段 prompt(可对照不同帧来源/模式做评测)。
+#   - validation_qwen_prompt：是否启用验证自动 prompt 生成。
+#   - validation_qwen_mode：帧来源语义(oracle_section_gt 等)。
+#   - validation_qwen_event_yaml / validation_qwen_full_video_sample_frames：事件集 YAML、整段采样帧数。
+#   - validation_qwen_provider / _model_path：模型提供方(auto/qwen/gemma4)与本地权重路径。
+#   - validation_qwen_device_map / _torch_dtype：设备映射(transient_cuda 等)与精度。
+#   - validation_qwen_max_new_tokens / _word_limit：生成最大 token 数与英文词数上限。
+#   - validation_qwen_sample_frames / _frame_max_side：采样帧数与帧最长边下采样上限。
+#   - validation_qwen_trust_remote_code：加载模型时是否 trust_remote_code。
+# =============================================================================
+validation_qwen_prompt: false
+validation_qwen_mode: oracle_section_gt
+validation_qwen_event_yaml: ""
+validation_qwen_full_video_sample_frames: 0
+validation_qwen_provider: auto
+validation_qwen_model_path: pathto/Qwen/Qwen3.5-4B
+validation_qwen_device_map: transient_cuda
+validation_qwen_torch_dtype: bfloat16
+validation_qwen_max_new_tokens: 256
+validation_qwen_word_limit: 200
+validation_qwen_sample_frames: 5
+validation_qwen_frame_max_side: 224
+validation_qwen_trust_remote_code: false
+
+
+# =============================================================================
+# 组 24] 训练用 Qwen/VLM 自动 prompt
+# 训练时用 VLM 从 GT 帧自动生成 prompt 覆盖数据集 caption(可只对缺失项生成并缓存)。
+#   - train_qwen_prompt：是否启用训练自动 prompt 生成。
+#   - train_qwen_model_path：训练 prompt 模型本地路径(空=复用验证的模型)。
+#   - train_qwen_provider / _device_map / _torch_dtype：提供方、设备映射、精度。
+#   - train_qwen_max_new_tokens / _word_limit：生成最大 token 数与英文词数上限。
+#   - train_qwen_sample_frames / _frame_max_side：采样帧数与帧最长边下采样上限。
+#   - train_qwen_prompt_missing_only：仅在数据集 prompt 为空时才生成。
+#   - train_qwen_prompt_cache / _cache_dir：把新生成的 prompt 落盘缓存供后续 run 复用。
+#   - train_qwen_trust_remote_code：加载模型时是否 trust_remote_code。
+# =============================================================================
+train_qwen_prompt: false
+train_qwen_model_path: pathto/Qwen/Qwen3.5-4B
+train_qwen_provider: auto
+train_qwen_device_map: auto
+train_qwen_torch_dtype: bfloat16
+train_qwen_max_new_tokens: 256
+train_qwen_word_limit: 200
+train_qwen_sample_frames: 4
+train_qwen_frame_max_side: 224
+train_qwen_prompt_missing_only: false
+train_qwen_prompt_cache: false
+train_qwen_prompt_cache_dir: ""
+train_qwen_trust_remote_code: false
+
+
+# =============================================================================
+# 组 25] 计时 / 调试性能埋点
+# 训练/数据管线的耗时埋点，用于定位瓶颈，正常训练可保持默认。
+#   - debug：开启 timing/debug 仪表(默认关)。
+#   - timing_enabled / timing_interval：是否输出轻量计时、每隔多少步打印滚动汇总。
+#   - timing_warmup_steps / timing_dirname：跳过前 N 步计时、计时报告子目录名。
+#   - timing_no_cuda_sync / timing_print_top_k：计时是否做 CUDA 同步、打印最慢的前 K 个 scope。
+#   - dataset_timing_enabled / dataset_timing_sample_every：数据 worker 计时开关与采样间隔。
+# =============================================================================
+debug: false
+timing_enabled: true
+timing_interval: 20
+timing_warmup_steps: 1
+timing_dirname: timing
+timing_no_cuda_sync: false
+timing_print_top_k: 5
+dataset_timing_enabled: true
+dataset_timing_sample_every: 1

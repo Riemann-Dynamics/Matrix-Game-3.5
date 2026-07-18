@@ -1,0 +1,78 @@
+{
+  "person": "third_person",
+  "dataset_type": "da3_video_subject_ref",
+  "cases": [
+    {
+      "case": 0,
+      "clean_name": "Gta 5 _ NVE Ultra + Mclaren 675LT Chernobyl Edition Gameplay _ RTX 3060 Ti [rcA07MQHj7I]__row_000062__scene_9__00-04-19_00-05-08__b4136def09__p001",
+      "frame_count": 305,
+      "size": "56M",
+      "has_protagonist_refs": true,
+      "prompt_snippet": "The scene depicts a wide city street during a bright, sunny day with clear visibility. In the foreground, a black and ye",
+      "num_refs": 1
+    },
+    {
+      "case": 1,
+      "clean_name": "Relaxing Walk to Viking Age London in 878 CE (AC Valhalla) [BaGtFxq6TZ4]__row_000188__scene_2__9388p713_11880p819__7d721b7474__p013",
+      "frame_count": 2000,
+      "size": "—",
+      "has_protagonist_refs": true,
+      "prompt_snippet": "A figure in a long, heavy grey fabric cloak with a dark hood and intricate dark knotwork p",
+      "num_refs": 1
+    },
+    {
+      "case": 2,
+      "clean_name": "Assassins Creed Odyssey_ 4K Photorealistic Gameplay with Apex Reshade MOD [lYd8KKaT2Rk]__row_001411__scene_13__379p6_437p85__a9d08fea56__p001",
+      "frame_count": 499,
+      "size": "96M",
+      "has_protagonist_refs": true,
+      "prompt_snippet": "A dirt path, scattered with small rocks and light tan soil, stretches from the foreground toward the center horizon. On",
+      "num_refs": 1
+    },
+    {
+      "case": 3,
+      "clean_name": "GTA 5 Photorealistic Graphics in 2026 - Extreme Realistic ISLAND MANSION Insane Graphics🔥RTX 4090 [RqqAxuIyv-I]__row_000820__scene_28__202p517_218p133__f493c7d997",
+      "frame_count": 312,
+      "size": "45M",
+      "has_protagonist_refs": true,
+      "prompt_snippet": "A long-haired female character in a black sleeveless outfit, dark gloves, and black leggings stands in the foreground.",
+      "num_refs": 1
+    },
+    {
+      "case": 4,
+      "clean_name": "Assassin's Creed IV Black Flag - Relaxing Ambient Walking _ 4K Ultra Max Graphics - Ray Tracing GI [GC57Lk4kuzA]__row_000505__scene_3__659p792_1401p183__07b9683df3__p002",
+      "frame_count": 2000,
+      "size": "307M",
+      "has_protagonist_refs": true,
+      "prompt_snippet": "The cloaked figure in dark, layered garments with white accents stands centrally on a weathered wooden pier, their postu",
+      "num_refs": 4
+    },
+    {
+      "case": 5,
+      "clean_name": "[8K60+] The Witcher 3_ NEXT GEN modded Ultra graphics - Benis Beyond all Limits - 100+Mods [p_Yem5JXjec]__row_000658__scene_3__188p317_344p217__838ec96162__p002",
+      "frame_count": 452,
+      "size": "—",
+      "has_protagonist_refs": true,
+      "prompt_snippet": "A white-haired male warrior, wearing dark leather and chainmail armor with brown trousers",
+      "num_refs": 4
+    },
+    {
+      "case": 6,
+      "clean_name": "Relaxing Walk to Whiterun _ Skyrim Wunduniik 4K Ultra Modded Graphics [LGDlpZAawLQ]__row_000399__scene_12__5712p267_6854p733__50af85518d__p003",
+      "frame_count": 2000,
+      "size": "291M",
+      "has_protagonist_refs": true,
+      "prompt_snippet": "A character in brown quilted leather and chainmail armor, carrying a large circular yellow shield with black concentric",
+      "num_refs": 4
+    },
+    {
+      "case": 7,
+      "clean_name": "Just a relaxing walk around Los Santos (L.A) [bBKzkPbsCSQ]__row_000975__scene_25__9076p917_15897p8__57e6540d5f__p053",
+      "frame_count": 2000,
+      "size": "241M",
+      "has_protagonist_refs": true,
+      "prompt_snippet": "A central male figure in a dark gray hoodie, red shirt, and light blue jeans stands prominently on the sidewalk, appeari",
+      "num_refs": 4
+    }
+  ]
+}

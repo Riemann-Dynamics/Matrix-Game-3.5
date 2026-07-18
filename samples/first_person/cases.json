@@ -1,0 +1,71 @@
+{
+  "person": "first_person",
+  "dataset_type": "da3_video",
+  "source": "SANA-WM-Bench (CC BY 4.0, AI-generated conditioning images)",
+  "cases": [
+    {
+      "case": 0,
+      "scene_id": "game_style_001",
+      "category": "game_style",
+      "frames": 961,
+      "fps": 16,
+      "prompt_snippet": "I stand on a rugged, pebble-strewn dirt path facing a cluster of weathered, dilapidated structures. To the left, a small"
+    },
+    {
+      "case": 1,
+      "scene_id": "game_style_002",
+      "category": "game_style",
+      "frames": 961,
+      "fps": 16,
+      "prompt_snippet": "I stand atop a jagged, rocky summit composed of rough, grey stone and scattered patches of dark green mountain grass. Be"
+    },
+    {
+      "case": 2,
+      "scene_id": "indoor_001",
+      "category": "indoor",
+      "frames": 961,
+      "fps": 16,
+      "prompt_snippet": "I stand in a bright, sunlit kitchen where a marble countertop is laden with fresh ingredients. To my left, a glass bowl "
+    },
+    {
+      "case": 3,
+      "scene_id": "indoor_002",
+      "category": "indoor",
+      "frames": 961,
+      "fps": 16,
+      "prompt_snippet": "I sit at a light-toned wooden desk, centered before a large monitor displaying a misty mountain landscape. To my left, a"
+    },
+    {
+      "case": 4,
+      "scene_id": "outdoor_city_001",
+      "category": "outdoor_city",
+      "frames": 961,
+      "fps": 16,
+      "prompt_snippet": "I stand on a wide, paved pedestrian sidewalk at a city intersection under a clear, bright blue sky. The asphalt street i"
+    },
+    {
+      "case": 5,
+      "scene_id": "outdoor_city_002",
+      "category": "outdoor_city",
+      "frames": 961,
+      "fps": 16,
+      "prompt_snippet": "I stand on a cobblestone street corner where grand, multi-story sandstone buildings flank a narrow road. The architectur"
+    },
+    {
+      "case": 6,
+      "scene_id": "outdoor_nature_001",
+      "category": "outdoor_nature",
+      "frames": 961,
+      "fps": 16,
+      "prompt_snippet": "I stand perched on a rugged, jagged cliffside made of coarse, grey-brown granite. Below me, a deep, precipitous canyon c"
+    },
+    {
+      "case": 7,
+      "scene_id": "outdoor_nature_002",
+      "category": "outdoor_nature",
+      "frames": 961,
+      "fps": 16,
+      "prompt_snippet": "I stand in a vast, darkened plain of dry, textured grass that stretches toward a low, distant horizon. Above me, an imme"
+    }
+  ]
+}

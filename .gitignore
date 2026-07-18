@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+outputs/
+.cache/
+checkpoints/*
+!checkpoints/.gitkeep
+wandb/

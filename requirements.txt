@@ -1,0 +1,41 @@
+# Tested with Python 3.10, CUDA 12.8, torch 2.10.
+
+torch
+torchvision
+numpy
+accelerate
+transformers
+sentencepiece
+peft
+modelscope
+huggingface_hub
+safetensors
+einops
+omegaconf
+PyYAML
+tqdm
+pandas
+opencv-python
+pillow
+OpenEXR
+imageio
+imageio-ffmpeg
+decord
+
+# Third-person subject-ref masks (COCO RLE decode)
+pycocotools
+
+# Pulled in at `import depth_anything_3.api` time
+moviepy==1.0.3
+pycolmap
+trimesh
+
+# attention acceleration (auto-detected; SDPA fallback exists)
+xformers
+
+# ---------------------------------------------------------------------------
+# Optional:
+#   wandb        — only if you want online metrics (configs ship wandb_mode: disabled)
+#   tensorboard  — fallback metrics backend; absence degrades to no-op
+#   deepspeed    — not used by single-GPU inference
+#   ultralytics  — only if validation_dynamic_object_filter=true (off by default)
