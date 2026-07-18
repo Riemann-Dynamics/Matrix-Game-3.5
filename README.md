@@ -5,7 +5,7 @@
 <h3 align="center">Enhancing Real-Time Streaming Interactive World Models with Patch Memory</h3>
 </div>
 
-<font size=7><div align='center' >  [[🤗 HuggingFace](https://huggingface.co/RiemannDynamics/Matrix-Game-3.5-Base)] [[📖 Technical Report](assets/Matrix_Game_3_5.pdf)] [[🚀 Project Website](https://matrix-game-v3-5.github.io/)] </div></font>
+<font size=7><div align='center' >  [[🤗 HuggingFace](https://huggingface.co/RiemannDynamics/Matrix-Game-3.5-Base)] [[📖 Technical Report](https://matrix-game-v3-5.github.io/paper/Matrix-Game-3.5.pdf)] [[🚀 Project Website](https://matrix-game-v3-5.github.io/)] </div></font>
 
 
 https://github.com/user-attachments/assets/26d45554-4964-4a71-8e2e-43cb70c28a4c
@@ -13,10 +13,9 @@ https://github.com/user-attachments/assets/26d45554-4964-4a71-8e2e-43cb70c28a4c
 ## 📝 Overview
 **Matrix-Game-3.5** is a memory-augmented interactive world model for 720p long-horizon camera-controllable video generation, in both **first-person** and **third-person** modes.
 
-- **Geometry-aware camera control**: PRoPE-based camera conditioning is integrated into the spatiotemporal RoPE — each latent frame is associated with a full world-to-image projection matrix, yielding best-in-class camera accuracy across pose metrics.
-- **Patch-level Mosaic Memory**: past observations are reprojected into the current view using metric depth, camera poses and intrinsics, giving long-horizon scene recall with visibility-aware fusion and stable revisit consistency.
-- **Static–dynamic decoupling**: motion-aware object filtering separates the dynamic subject from the static scene; the third-person model conditions on **protagonist reference tokens** for identity-consistent character generation.
-- **Real-time few-step distillation**: a distillation pipeline combining Distribution Matching Distillation on autoregressive rollouts with a consistency objective enables real-time streaming generation without future-information leakage.
+- **Patch Memory + Warped PRoPE**: a parameter-free long-term geometric memory framework — Patch Memory lifts past observations into a 3D memory with geometric alignment and visibility-aware retrieval for cross-view scene recall, while Warped PRoPE folds camera projection matrices into the spatiotemporal RoPE to jointly model temporal relations and view geometry, delivering long-horizon consistency and precise camera control without modifying the backbone.
+- **Static–dynamic decoupled world representation**: the static scene keeps long-term geometric memory through Patch Memory, while dynamic subjects are maintained by lightweight multi-view **reference tokens** carrying identity and appearance; combined with motion-aware filtering and leakage-free subject training, this unifies geometric and subject consistency and mitigates ghosting and identity drift in long-horizon generation.
+- **Long-horizon real-time distillation**: from a bidirectional diffusion model to a few-step causal generator — Flow Matching in a perceptual feature space jointly learns autoregressive denoising and few-step generation as a strong initialization, then curriculum-style self-rollout DMD progressively distills CFG, camera control and memory conditioning, enabling minute-long, few-step, real-time interactive generation.
 
 ## 🤗 Matrix-Game-3.5 Models
 We currently provide two pretrained **5B base (bidirectional) models**, built on Wan2.2-TI2V-5B:
@@ -148,7 +147,12 @@ and `intrinsics` — `(N,4) [fx,fy,cx,cy]` (or `(4,)` / `(3,3)` / `(N,3,3)`)
 in pixels of the anchor image. A trajectory shorter than
 `1 + 84 × num_blocks` poses is padded by holding the last pose.
 
-## ⭐ Acknowledgements
+## 🔗 Related Links
+**Matrix-Game Series**
+- [Matrix-Game 3.0](https://matrix-game-v3.github.io/) — Real-time and streaming interactive world model with long-horizon memory
+- [Matrix-Game 2.0](https://matrix-game-v2.github.io/) — Real-time, streaming interactive world model
+
+**Acknowledgements**
 - [Wan2.2](https://github.com/Wan-Video/Wan2.2) for the strong base model
 - [DiffSynth-Studio](https://github.com/modelscope/DiffSynth-Studio) for the diffusion framework this codebase builds on
 - [Depth-Anything-3](https://github.com/ByteDance-Seed/Depth-Anything-3) for metric depth estimation
