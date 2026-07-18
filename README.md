@@ -8,7 +8,7 @@
 <font size=7><div align='center' >  [[🤗 HuggingFace](https://huggingface.co/RiemannDynamics/Matrix-Game-3.5-Base)] [[📖 Technical Report](assets/Matrix_Game_3_5.pdf)] [[🚀 Project Website](https://matrix-game-v3-5.github.io/)] </div></font>
 
 
-https://github.com/user-attachments/assets/4a8f1c8c-e540-4799-b453-9dada298fede
+https://github.com/user-attachments/assets/26d45554-4964-4a71-8e2e-43cb70c28a4c
 
 ## 📝 Overview
 **Matrix-Game-3.5** is a memory-augmented interactive world model for 720p long-horizon camera-controllable video generation, in both **first-person** and **third-person** modes.
@@ -164,11 +164,7 @@ If you find this work useful for your research, please kindly cite:
 ```
   @misc{2026matrixgame35,
     title={Matrix-Game 3.5: Enhancing Real-Time Streaming Interactive World Models with Patch Memory},
-    author={{Riemann Dynamics
-
-https://github.com/user-attachments/assets/4e4bcb56-8b50-4293-be5b-8f7ba218941b
-
-}},
+    author={{Riemann Dynamics}},
     year={2026},
     howpublished={Project page},
     url={https://matrix-game-v3-5.github.io/}
