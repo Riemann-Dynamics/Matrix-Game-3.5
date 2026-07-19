@@ -15,7 +15,11 @@
 from typing import List
 import numpy as np
 import torch
-from evo.core.trajectory import PosePath3D
+
+try:
+    from evo.core.trajectory import PosePath3D
+except ModuleNotFoundError:
+    PosePath3D = None
 
 from depth_anything_3.utils.geometry import affine_inverse, affine_inverse_np
 
@@ -82,6 +86,35 @@ def _poses_from_ext(ext_ref, ext_est):
 
 
 def _umeyama_sim3_from_paths(pose_ref, pose_est):
+    if PosePath3D is None:
+        src = np.asarray(pose_est[:, :3, 3], dtype=np.float64)
+        dst = np.asarray(pose_ref[:, :3, 3], dtype=np.float64)
+        if src.shape != dst.shape or src.ndim != 2 or src.shape[1] != 3:
+            raise ValueError(
+                "pose_ref and pose_est must contain matching 3D translations"
+            )
+        src_mean = src.mean(axis=0)
+        dst_mean = dst.mean(axis=0)
+        src_centered = src - src_mean
+        dst_centered = dst - dst_mean
+        covariance = dst_centered.T @ src_centered / max(1, len(src))
+        u, singular_values, vt = np.linalg.svd(covariance)
+        correction = np.eye(3, dtype=np.float64)
+        if np.linalg.det(u) * np.linalg.det(vt) < 0:
+            correction[-1, -1] = -1.0
+        rotation = u @ correction @ vt
+        variance = float(np.square(src_centered).sum() / max(1, len(src)))
+        if variance <= np.finfo(np.float64).eps:
+            raise ValueError("estimated trajectory has zero translation variance")
+        scale = float((singular_values * np.diag(correction)).sum() / variance)
+        translation = dst_mean - scale * (rotation @ src_mean)
+        aligned = _apply_sim3_to_poses(
+            pose_est,
+            rotation,
+            translation,
+            scale,
+        )
+        return rotation, translation, scale, aligned
     path_ref = PosePath3D(poses_se3=pose_ref.copy())
     path_est = PosePath3D(poses_se3=pose_est.copy())
     r, t, s = path_est.align(path_ref, correct_scale=True)

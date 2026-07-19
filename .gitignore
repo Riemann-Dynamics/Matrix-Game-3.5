@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 outputs/
+test_outputs/
 .cache/
 checkpoints/*
 !checkpoints/.gitkeep

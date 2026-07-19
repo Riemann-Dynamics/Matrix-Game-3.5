@@ -139,6 +139,31 @@ Results land in `outputs/{first_person,third_person}/<timestamp>/`:
 | `--caption` | — | segment caption json instead of a single prompt (multi-block runs) |
 | `--keep-workspace` | off | keep intermediate artifacts in `.cache/infer_runs/` for debugging |
 
+### Distilled causal inference
+
+Use `infer_distilled.py` for released few-step causal checkpoints. It follows
+the same explicit image/camera/prompt interface as the base model. Inference
+hyperparameters live in `configs/infer_distilled.yaml`; no training run,
+validation video, manifest, or sidecar metadata is read.
+
+- `standard`: clean rolling prefix, online mosaic memory, dynamic context.
+- `hiar-sde`: HiAR next-timestep prefix/context corruption for a HiAR-trained checkpoint.
+- `sink-anchor-context`: online memory with the original C0 anchor used as context.
+
+```bash
+python infer_distilled.py \
+    --config configs/infer_distilled.yaml \
+    --checkpoint checkpoints/distilled-stage3.safetensors \
+    --image samples/first_person/case_0/input.png \
+    --camera samples/first_person/case_0/camera.npz \
+    --prompt-file samples/first_person/case_0/prompt.txt \
+    --output result.mp4
+```
+
+Set `profile` in the config to `standard`, `hiar-sde`, or
+`sink-anchor-context`. See [`DISTILLED_INFERENCE.md`](DISTILLED_INFERENCE.md)
+for the complete interface and configuration fields.
+
 **Camera format** (`--camera`): a `.npz` with
 `extrinsics_c2w` — `(N,4,4)` camera-to-world matrices, metric translation —
 and `intrinsics` — `(N,4) [fx,fy,cx,cy]` (or `(4,)` / `(3,3)` / `(N,3,3)`)

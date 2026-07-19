@@ -217,17 +217,10 @@ def write_refs(scene_dir, refs_dir):
     print(f"[infer] installed {len(rows)} protagonist reference(s)")
 
 
-def build_workspace(args):
-    person_dir = "first_person" if args.person == "first" else "third_person"
-    name = args.name or time.strftime("%Y%m%d_%H%M%S")
-    out_root = os.path.abspath(os.path.join(args.output, person_dir, name))
-    # Intermediate synthesized scene + raw run live OUTSIDE the output dir;
-    # removed after a successful run (kept on failure / --keep-workspace).
-    tmp_root = os.path.join(REPO_DIR, ".cache", "infer_runs",
-                            f"{person_dir}_{name}")
+def build_input_workspace(args, tmp_root):
+    """Convert explicit inference inputs into the pipeline's one-scene layout."""
     ws = os.path.join(tmp_root, "workspace")
     scene = os.path.join(ws, "scenes", "case")
-    os.makedirs(out_root, exist_ok=True)
     for sub in ("rgb", "pose", "intrinsics", "depth"):
         os.makedirs(os.path.join(scene, sub), exist_ok=True)
 
@@ -255,6 +248,20 @@ def build_workspace(args):
     write_caption(ws, "case", args)
     if args.person == "third" and args.refs:
         write_refs(scene, os.path.abspath(args.refs))
+
+    return ws
+
+
+def build_workspace(args):
+    person_dir = "first_person" if args.person == "first" else "third_person"
+    name = args.name or time.strftime("%Y%m%d_%H%M%S")
+    out_root = os.path.abspath(os.path.join(args.output, person_dir, name))
+    # Intermediate synthesized scene + raw run live OUTSIDE the output dir;
+    # removed after a successful run (kept on failure / --keep-workspace).
+    tmp_root = os.path.join(REPO_DIR, ".cache", "infer_runs",
+                            f"{person_dir}_{name}")
+    os.makedirs(out_root, exist_ok=True)
+    ws = build_input_workspace(args, tmp_root)
 
     return out_root, tmp_root, ws
 

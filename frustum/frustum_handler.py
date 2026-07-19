@@ -222,8 +222,29 @@ try:
 
     HAS_DA3 = True
 except ImportError:
+    DepthAnything3 = None
     HAS_DA3 = False
 DepthEstimator = Callable[[Sequence[np.ndarray]], np.ndarray]
+
+
+def _is_da3_compatible_estimator(estimator) -> bool:
+    """Recognize DA3 even when its vendored path was added after this module loaded.
+
+    The training entrypoint adds ``third_party/depth-anything-3/src`` lazily.
+    In that import order the eager import above can legitimately fail, so an
+    ``isinstance`` check alone would misroute a real DA3 model through the
+    legacy VideoDepthAnything API.  The explicit marker supports adapters such
+    as VGGT-Omega; the module/name check covers the upstream DA3 class without
+    accepting arbitrary objects that happen to expose ``inference``.
+    """
+    if getattr(estimator, "da3_compatible", False):
+        return callable(getattr(estimator, "inference", None))
+    estimator_type = type(estimator)
+    return (
+        estimator_type.__name__ == "DepthAnything3"
+        and estimator_type.__module__.startswith("depth_anything_3.")
+        and callable(getattr(estimator, "inference", None))
+    )
 
 import torch.nn.functional as F
 
@@ -529,6 +550,8 @@ class FrustumHandler:
         depth_model_config: Optional[Dict] = None,
         depth_infer_fps: int = 30,
         depth_input_size: Optional[int] = None,
+        da3_process_res: Optional[int] = None,
+        da3_autocast_dtype: Optional[str] = None,
         depth_fp32: bool = False,
         keyframe_rot_thresh_deg: float = 45,
         keyframe_trans_thresh: float = 1,
@@ -565,6 +588,16 @@ class FrustumHandler:
         self._depth_model_config = depth_model_config or {}
         self._depth_infer_fps = int(depth_infer_fps)
         self._depth_input_size = depth_input_size
+        self._da3_process_res = int(da3_process_res or depth_input_size or 700)
+        if self._da3_process_res <= 0:
+            raise ValueError("da3_process_res/depth_input_size must be positive")
+        self._da3_autocast_dtype = str(da3_autocast_dtype or "").strip().lower()
+        valid_autocast = {"", "none", "off", "float16", "fp16", "bfloat16", "bf16"}
+        if self._da3_autocast_dtype not in valid_autocast:
+            raise ValueError(
+                "da3_autocast_dtype must be one of none/float16/bfloat16, "
+                f"got {da3_autocast_dtype!r}"
+            )
         self._depth_fp32 = bool(depth_fp32)
 
         # 关键帧参数：硬阈值 + 时间强制阈值
@@ -672,14 +705,26 @@ class FrustumHandler:
         self.last_extrinsic = self.extrinsics[-1] if self.extrinsics else np.eye(4)
 
     def reestimate_depth(self, frames: Sequence[np.ndarray]) -> None:
-        with torch.no_grad():
+        autocast_dtype = None
+        if self._da3_autocast_dtype in {"float16", "fp16"}:
+            autocast_dtype = torch.float16
+        elif self._da3_autocast_dtype in {"bfloat16", "bf16"}:
+            autocast_dtype = torch.bfloat16
+        autocast_context = (
+            torch.autocast(device_type="cuda", dtype=autocast_dtype)
+            if autocast_dtype is not None
+            else contextlib.nullcontext()
+        )
+        with torch.no_grad(), autocast_context:
             self._depth_estimator = self._depth_estimator.cuda()
             prediction = self._depth_estimator.inference(
                 frames,
                 use_ray_pose=True,
-                process_res=700,
+                process_res=self._da3_process_res,
             )
             self._depth_estimator = self._depth_estimator.cpu()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
         depths = prediction.depth  # [N, H, W] float32 array
         base_extrinsics = np.eye(4)[None, ...].repeat(depths.shape[0], 0)
         base_extrinsics[:, :3] = prediction.extrinsics  # [N, 4, 4] array
@@ -860,9 +905,7 @@ class FrustumHandler:
             # estimator that exposes the same ``.inference()`` contract and sets
             # ``da3_compatible = True`` (e.g. the VGGT-Omega metric estimator).
             # This keeps ``frustum/`` free of any mosaic-side imports.
-            if (
-                HAS_DA3 and isinstance(self._depth_estimator, DepthAnything3)
-            ) or getattr(self._depth_estimator, "da3_compatible", False):
+            if _is_da3_compatible_estimator(self._depth_estimator):
                 # 使用 Depth Anything V3 / DA3 兼容估计器推理
                 model_name = getattr(self._depth_estimator, "model_name", "unknown")
                 print(f"注册帧深度/位姿推理(estimator={model_name})")
@@ -884,12 +927,31 @@ class FrustumHandler:
                     else:
                         pil_frames.append(frame)
 
-                # DA3 推理
-                with torch.no_grad():
+                autocast_dtype = None
+                if self._da3_autocast_dtype in {"float16", "fp16"}:
+                    autocast_dtype = torch.float16
+                elif self._da3_autocast_dtype in {"bfloat16", "bf16"}:
+                    autocast_dtype = torch.bfloat16
+                use_autocast = autocast_dtype is not None and str(device).startswith("cuda")
+                autocast_context = (
+                    torch.autocast(device_type="cuda", dtype=autocast_dtype)
+                    if use_autocast
+                    else contextlib.nullcontext()
+                )
+                need_da3_pose = not (
+                    force_using_input_extrinics and intrinsics is not None
+                )
+                if not need_da3_pose:
+                    print(
+                        "Using DA3 depth with caller-provided camera intrinsics/extrinsics; "
+                        "estimator pose is disabled.",
+                        flush=True,
+                    )
+                with torch.no_grad(), autocast_context:
                     prediction = self._depth_estimator.inference(
                         pil_frames,
-                        use_ray_pose=True,
-                        process_res=700,
+                        use_ray_pose=need_da3_pose,
+                        process_res=self._da3_process_res,
                     )
                 depths = prediction.depth  # [N, H, W] float32 array
                 if not force_using_input_extrinics:

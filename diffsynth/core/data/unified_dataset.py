@@ -2082,7 +2082,12 @@ class _MosaicVideoSharedDataset(_MosaicDatasetBase):
         return array
 
 
-import OpenEXR, Imath
+try:
+    import OpenEXR
+    import Imath
+except ModuleNotFoundError:
+    OpenEXR = None
+    Imath = None
 from pathlib import Path
 import zipfile, tempfile
 
@@ -2473,6 +2478,11 @@ def load_depth_zip_to_array(zip_path, frame_count=None):
             # with the env, so we spool to a tempfile per frame. The cost
             # is ~10% of the EXR decode for typical 960x540 HALF Z frames,
             # which is negligible next to ``query_hits_mode_new``.
+            if OpenEXR is None or Imath is None:
+                raise ImportError(
+                    "Reading EXR depth frames requires the optional OpenEXR and "
+                    "Imath Python packages. NPZ depth input does not require them."
+                )
             with tempfile.NamedTemporaryFile(suffix=".exr") as tmp:
                 tmp.write(buf)
                 tmp.flush()

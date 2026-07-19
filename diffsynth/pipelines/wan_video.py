@@ -3349,6 +3349,193 @@ class WanVideoUnit_PropeCamera(PipelineUnit):
 WAN_VIDEO_PROPE_CAMERA_UNIT = WanVideoUnit_PropeCamera()
 
 
+def _kv_freqs(dit, temporal_positions, h, w, device):
+    """RoPE freqs for a list of frames at the given temporal positions (one int
+    per frame), spatial grid h x w. Mirrors the standard (non-revgrid) freqs
+    build in ``model_fn_wan_video``: temporal(p) (x) freqs[1][:h] (x) freqs[2][:w]."""
+    parts = []
+    for p in temporal_positions:
+        parts.append(
+            torch.cat(
+                [
+                    dit.freqs[0][int(p)].view(1, 1, 1, -1).expand(1, h, w, -1),
+                    dit.freqs[1][:h].view(1, h, 1, -1).expand(1, h, w, -1),
+                    dit.freqs[2][:w].view(1, 1, w, -1).expand(1, h, w, -1),
+                ],
+                dim=-1,
+            )
+        )
+    return (
+        torch.cat(parts, dim=0)
+        .reshape(len(temporal_positions) * h * w, 1, -1)
+        .to(device)
+    )
+
+
+def model_fn_causal_kv(
+    dit,
+    *,
+    latents_chunk,
+    timestep_frames,
+    context,
+    camera_info,
+    cur_positions,
+    cur_frames,
+    caches,
+    mosaic_latent=None,
+    mosaic_positions=None,
+    mosaic_frames=None,
+    cache_positions=None,
+    cache_frames=None,
+    cache_read_chunk_id=None,
+    cur_cache_chunk_ids=None,
+    write_cache=False,
+    use_gradient_checkpointing=False,
+    use_gradient_checkpointing_offload=False,
+):
+    """One AR chunk forward with the per-block KV cache.
+
+    ``latents_chunk`` is the CUR latents (C0 seed, or the current N_i chunk),
+    ``mosaic_latent`` (optional) is the frozen ``M_{0..i}`` prepended. CUR attends
+    to ``[cache(clean prefix), M, CUR]``. Returns the CUR prediction (B,C,F,H,W).
+    ``*_positions`` are the CURRENT-window temporal RoPE positions; ``*_frames``
+    index ``camera_info`` for PRoPE (positions == frames when camera is built
+    per-window like the window-recompute path)."""
+    if mosaic_latent is not None:
+        x_in = torch.cat([mosaic_latent, latents_chunk], dim=2)
+        n_mosaic_frames = int(mosaic_latent.shape[2])
+    else:
+        x_in = latents_chunk
+        n_mosaic_frames = 0
+    cur_positions = list(cur_positions)
+    cur_frames = list(cur_frames)
+    if len(cur_positions) != len(cur_frames):
+        raise ValueError(
+            "cur_positions length must match cur_frames, "
+            f"got {len(cur_positions)} vs {len(cur_frames)}."
+        )
+    if mosaic_latent is not None:
+        if mosaic_positions is None:
+            mosaic_positions = list(mosaic_frames) if mosaic_frames is not None else []
+        else:
+            mosaic_positions = list(mosaic_positions)
+        if mosaic_frames is None:
+            mosaic_frames = list(mosaic_positions)
+        else:
+            mosaic_frames = list(mosaic_frames)
+        if len(mosaic_positions) != n_mosaic_frames or len(mosaic_frames) != n_mosaic_frames:
+            raise ValueError(
+                "mosaic_positions/mosaic_frames length must match mosaic_latent T, "
+                f"got positions={len(mosaic_positions)} frames={len(mosaic_frames)} "
+                f"T={n_mosaic_frames}."
+            )
+    else:
+        mosaic_positions = []
+        mosaic_frames = []
+    if cache_positions is None and caches:
+        cache_positions = caches[0].get("positions")
+    if cache_frames is None and caches:
+        cache_frames = caches[0].get("frames")
+    if cache_positions is None:
+        cache_positions = cache_frames
+    if cache_frames is None:
+        cache_frames = cache_positions
+    cache_positions = [] if cache_positions is None else list(cache_positions)
+    cache_frames = [] if cache_frames is None else list(cache_frames)
+    if len(cache_positions) != len(cache_frames):
+        raise ValueError(
+            "cache_positions length must match cache_frames, "
+            f"got {len(cache_positions)} vs {len(cache_frames)}."
+        )
+    x = dit.patchify(x_in)
+    f, h, w = x.shape[2:]
+    tpf = h * w
+    x = rearrange(x, "b c f h w -> b (f h w) c").contiguous()
+    mosaic_tokens = n_mosaic_frames * tpf
+
+    timestep = timestep_frames.to(device=x.device).repeat_interleave(tpf)
+    mosaic_hole_token_mask = None
+    mosaic_hole_keep = None  # (mosaic_tokens,) True=keep -> attention mask for N
+    # Match the window-recompute path: hole mosaic tokens are zeroed, their RoPE
+    # freqs are zeroed below, their timestep is set to 1000, AND they are masked
+    # out of the noisy chunk's keys (causal + hole mask stacked).
+    if mosaic_latent is not None and mosaic_tokens > 0:
+        mz = (mosaic_latent == 0).all(dim=(0, 1))  # (Tm, H_lat, W_lat)
+        Tm, Hf, Wf = mz.shape
+        hole_patch = (
+            mz.reshape(Tm, Hf // 2, 2, Wf // 2, 2).all(dim=(2, 4)).flatten()
+        )  # (mosaic_tokens,)
+        full_mask = torch.zeros(
+            timestep.shape[0], dtype=torch.bool, device=timestep.device
+        )
+        full_mask[:mosaic_tokens] = hole_patch.to(timestep.device)
+        mosaic_hole_token_mask = full_mask
+        mosaic_hole_keep = (~hole_patch).to(x.device)
+        x[:, mosaic_hole_token_mask.to(x.device)] = 0
+        timestep = timestep.clone()
+        timestep[mosaic_hole_token_mask] = 1000
+    t = dit.time_embedding(
+        sinusoidal_embedding_1d(dit.freq_dim, timestep).unsqueeze(0)
+    )
+    t_mod = dit.time_projection(t).unflatten(2, (6, dit.dim))
+    context = dit.text_embedding(context)
+    if x.shape[0] != context.shape[0]:
+        x = x.repeat(context.shape[0], 1, 1)
+
+    freqs_positions = list(mosaic_positions) + list(cur_positions)
+    freqs_cur = _kv_freqs(dit, freqs_positions, h, w, x.device)
+    if mosaic_hole_token_mask is not None:
+        freqs_cur = freqs_cur.clone()
+        freqs_cur[mosaic_hole_token_mask.to(freqs_cur.device)] = 0
+    cache_freqs = (
+        _kv_freqs(dit, cache_positions, h, w, x.device) if cache_positions else None
+    )
+    mframes = list(mosaic_frames)
+    cframes = list(cache_frames)
+
+    for bi, block in enumerate(dit.blocks):
+        cache_i = caches[bi]
+        causal_kv_config = {
+            "num_heads": block.self_attn.num_heads,
+            "mosaic_tokens": mosaic_tokens,
+            "cur_positions": list(cur_positions),
+            "cur_frames": list(cur_frames),
+            "mosaic_frames": mframes,
+            "cache": cache_i,
+            "cache_freqs": cache_freqs,
+            "cache_frames": cframes,
+            "cache_read_chunk_id": cache_read_chunk_id,
+            "cur_cache_chunk_ids": cur_cache_chunk_ids,
+            "write_cache": write_cache,
+            "hole_keep": mosaic_hole_keep,
+        }
+        x = gradient_checkpoint_forward(
+            block,
+            use_gradient_checkpointing,
+            use_gradient_checkpointing_offload,
+            x,
+            context,
+            t_mod,
+            freqs_cur,
+            None,
+            camera_info,
+            None,
+            causal_kv_config,
+        )
+
+    x = dit.head(x, t)
+    x = dit.unpatchify(x, (f, h, w))
+    return x[:, :, n_mosaic_frames:]
+
+
+def init_causal_kv_caches(num_blocks):
+    """Per-block empty KV caches (filled lazily by ``causal_self_attention_kv``)."""
+    return [
+        {"k": None, "v": None, "positions": [], "frames": [], "chunk_ids": []}
+        for _ in range(num_blocks)
+    ]
+
+
 def model_fn_wan_video(
     dit: WanModel,
     motion_controller: WanMotionControllerModel = None,
@@ -4513,7 +4700,6 @@ def model_fn_wan_video(
     if condition_frame_count > 0:
         x = x[:, :, condition_frame_count:, :, :]
     return x
-
 
 def model_fn_longcat_video(
     dit: LongCatVideoTransformer3DModel,

@@ -5,7 +5,7 @@ import math
 from typing import Tuple, Optional
 from einops import rearrange
 from .wan_video_camera_controller import SimpleAdapter
-from .prope_attention import prope_dot_product_attention
+from .prope_attention import prope_dot_product_attention, _prepare_apply_fns
 from ..core.gradient import gradient_checkpoint_forward
 from .wantodance import WanToDanceRotaryEmbedding, WanToDanceMusicEncoderLayer
 
@@ -73,6 +73,51 @@ def flash_attention(
         x = rearrange(x, "b n s d -> b s (n d)", n=num_heads)
     return x
 
+
+def prope_attention_by_frame_indices(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    num_heads: int,
+    camera_info,
+    q_frame_indices,
+    kv_frame_indices,
+    attn_mask=None,
+    camera_layout="full",
+):
+    viewmats = camera_info[1]
+    P, P_T, P_inv = viewmats
+    q_idx = torch.as_tensor(q_frame_indices, device=P.device, dtype=torch.long)
+    kv_idx = torch.as_tensor(kv_frame_indices, device=P.device, dtype=torch.long)
+    q_viewmats = (
+        P.index_select(1, q_idx),
+        P_T.index_select(1, q_idx),
+        P_inv.index_select(1, q_idx),
+    )
+    kv_viewmats = (
+        P.index_select(1, kv_idx),
+        P_T.index_select(1, kv_idx),
+        P_inv.index_select(1, kv_idx),
+    )
+    q = rearrange(q, "b s (n d) -> b n s d", n=num_heads)
+    k = rearrange(k, "b s (n d) -> b n s d", n=num_heads)
+    v = rearrange(v, "b s (n d) -> b n s d", n=num_heads)
+    head_dim = q.shape[-1]
+    apply_q, _, apply_o = _prepare_apply_fns(
+        head_dim=head_dim,
+        viewmats=q_viewmats,
+        camera_layout=camera_layout,
+    )
+    _, apply_kv, _ = _prepare_apply_fns(
+        head_dim=head_dim,
+        viewmats=kv_viewmats,
+        camera_layout=camera_layout,
+    )
+    x = F.scaled_dot_product_attention(
+        apply_q(q), apply_kv(k), apply_kv(v), attn_mask=attn_mask
+    )
+    x = apply_o(x)
+    return rearrange(x, "b n s d -> b s (n d)", n=num_heads)
 
 def modulate(x: torch.Tensor, shift: torch.Tensor, scale: torch.Tensor):
     return x * (1 + scale) + shift
@@ -302,6 +347,239 @@ class GateModule(nn.Module):
         return x + gate * residual
 
 
+def causal_self_attention_kv(
+    self_attn,
+    x_cur,
+    freqs_cur,
+    camera_info,
+    *,
+    num_heads,
+    mosaic_tokens,
+    cur_frames,
+    cur_positions=None,
+    mosaic_frames,
+    cache=None,
+    cache_freqs=None,
+    cache_frames=None,
+    cache_read_chunk_id=None,
+    cur_cache_chunk_ids=None,
+    write_cache=False,
+    hole_keep=None,
+):
+    """KV-cache-aware causal self-attention for autoregressive rollout.
+
+    Processes one inference chunk ``x_cur = [M (frozen) | CUR]`` where
+    ``CUR`` is either the C0 anchor (seed, ``mosaic_tokens == 0``) or the current
+    noisy chunk ``N_i`` (denoise / cache-fill). The clean prefix ``[C0, N_0..i-1]``
+    lives in ``cache`` (PRE-RoPE k + raw v + per-frame global indices); it is
+    re-RoPE'd at READ time with ``cache_freqs`` (current window positions) so the
+    sliding-window re-anchoring is exact, then PRoPE is applied by frame index
+    inside ``prope_attention_by_frame_indices``. Attention is permutation-
+    invariant over keys, so logical order ``[C0, M_{0..i}, N_0..i]`` is
+    equivalent to ``[cache(C0+N_0..i-1), M_{0..i}, N_i]``.
+
+      * ``CUR`` attends to ``[cache, M, CUR]``; ``M`` is frozen (out stays 0).
+      * ``write_cache`` appends ``CUR``'s PRE-RoPE k / raw v to ``cache``.
+
+    ``freqs_cur`` covers ``x_cur`` (M then CUR) at the CURRENT window positions.
+    ``cur_positions`` are temporal RoPE indices; ``cur_frames`` are PRoPE
+    camera-frame indices. They are equal in legacy layouts but differ when C0
+    contains retrieved context frames.
+    """
+    q = self_attn.norm_q(self_attn.q(x_cur))
+    k = self_attn.norm_k(self_attn.k(x_cur))
+    v = self_attn.v(x_cur)
+
+    # CUR pre-RoPE k / raw v (what gets written to the cache for future chunks).
+    cur_k_pre = k[:, mosaic_tokens:]
+    cur_v_raw = v[:, mosaic_tokens:]
+
+    use_prope_attention = self_attn.use_prope and camera_info is not None
+    if not (use_prope_attention and self_attn.prope_disable_native_rope):
+        rope_freqs_cur = freqs_cur
+        if use_prope_attention and self_attn.prope_disable_t_rope:
+            rope_freqs_cur = freqs_cur.clone()
+            rope_freqs_cur[..., : self_attn.rope_t_pairs] = 1
+        q = rope_apply(q, rope_freqs_cur, num_heads)
+        k = rope_apply(k, rope_freqs_cur, num_heads)
+
+    def build_cur_chunk_keep_mask(cur_key_tokens):
+        if cur_cache_chunk_ids is None:
+            return None
+        cur_chunk_ids = [int(v) for v in list(cur_cache_chunk_ids)]
+        cur_frame_count = len(cur_frames)
+        if len(cur_chunk_ids) != cur_frame_count:
+            raise RuntimeError(
+                "cur_cache_chunk_ids length must match cur_frames, "
+                f"got {len(cur_chunk_ids)} vs {cur_frame_count}."
+            )
+        if cur_frame_count == 0:
+            return None
+        cur_query_tokens = int(q.shape[1] - mosaic_tokens)
+        if cur_query_tokens % cur_frame_count != 0 or cur_key_tokens % cur_frame_count != 0:
+            raise RuntimeError(
+                "Current CUR token count must be divisible by cur_frames for chunk masking, "
+                f"got query_tokens={cur_query_tokens}, key_tokens={cur_key_tokens}, "
+                f"cur_frames={cur_frame_count}."
+            )
+        query_tokens_per_frame = cur_query_tokens // cur_frame_count
+        key_tokens_per_frame = cur_key_tokens // cur_frame_count
+        frame_ids = torch.as_tensor(cur_chunk_ids, dtype=torch.long, device=k.device)
+        query_ids = frame_ids.repeat_interleave(query_tokens_per_frame)
+        key_ids = frame_ids.repeat_interleave(key_tokens_per_frame)
+
+        # Seed C0 may contain multiple per-chunk context groups plus anchor frames.
+        # Context for chunk i can see only C_i and anchors. Anchors are global C0.
+        key_is_anchor = key_ids < 0
+        query_is_anchor = query_ids < 0
+        same_chunk = query_ids[:, None] == key_ids[None, :]
+        keep_for_context = same_chunk | key_is_anchor[None, :]
+        keep_for_anchor = key_is_anchor[None, :].expand_as(keep_for_context)
+        return torch.where(query_is_anchor[:, None], keep_for_anchor, keep_for_context)
+
+    k_parts, v_parts, kv_frames, keep_parts = [], [], [], []
+    if cache is not None and cache.get("k") is not None and int(cache["k"].shape[1]) > 0:
+        cache_k_pre = cache["k"]
+        cache_v_raw = cache["v"]
+        cache_frames_list = list(cache_frames)
+        cache_freqs_sel = cache_freqs
+        cache_chunk_ids = cache.get("chunk_ids")
+        if (
+            cache_read_chunk_id is not None
+            and cache_chunk_ids is not None
+            and len(cache_chunk_ids) == len(cache_frames_list)
+            and len(cache_frames_list) > 0
+        ):
+            frame_keep = [
+                int(chunk_id) < 0 or int(chunk_id) == int(cache_read_chunk_id)
+                for chunk_id in cache_chunk_ids
+            ]
+            if not all(frame_keep):
+                tokens_per_cache_frame = int(cache_k_pre.shape[1]) // max(1, len(cache_frames_list))
+                token_keep = torch.as_tensor(
+                    frame_keep, device=cache_k_pre.device, dtype=torch.bool
+                ).repeat_interleave(tokens_per_cache_frame)
+                cache_k_pre = cache_k_pre[:, token_keep]
+                cache_v_raw = cache_v_raw[:, token_keep]
+                if cache_freqs_sel is not None:
+                    cache_freqs_sel = cache_freqs_sel.index_select(
+                        0, torch.nonzero(token_keep, as_tuple=False).reshape(-1).to(cache_freqs_sel.device)
+                    )
+                cache_frames_list = [
+                    frame for frame, keep_frame in zip(cache_frames_list, frame_keep) if keep_frame
+                ]
+        if int(cache_k_pre.shape[1]) > 0:
+            if use_prope_attention and self_attn.prope_disable_native_rope:
+                cached_k = cache_k_pre
+            else:
+                cached_freqs = cache_freqs_sel
+                if use_prope_attention and self_attn.prope_disable_t_rope:
+                    cached_freqs = cache_freqs_sel.clone()
+                    cached_freqs[..., : self_attn.rope_t_pairs] = 1
+                cached_k = rope_apply(cache_k_pre, cached_freqs, num_heads)
+            k_parts.append(cached_k)
+            v_parts.append(cache_v_raw)
+            kv_frames += cache_frames_list
+            keep_parts.append(
+                torch.ones(cached_k.shape[1], dtype=torch.bool, device=cached_k.device)
+            )
+    if mosaic_tokens > 0:
+        k_parts.append(k[:, :mosaic_tokens])
+        v_parts.append(v[:, :mosaic_tokens])
+        kv_frames += list(mosaic_frames)
+        # Stack hole mask with causal: drop mosaic hole tokens from N's keys.
+        keep_parts.append(
+            hole_keep.to(device=k.device)
+            if hole_keep is not None
+            else torch.ones(mosaic_tokens, dtype=torch.bool, device=k.device)
+        )
+    cur_key_start = sum(int(part.shape[1]) for part in k_parts)
+    cur_key_tokens = int(k.shape[1] - mosaic_tokens)
+    k_parts.append(k[:, mosaic_tokens:])
+    v_parts.append(v[:, mosaic_tokens:])
+    kv_frames += list(cur_frames)
+    keep_parts.append(
+        torch.ones(cur_key_tokens, dtype=torch.bool, device=k.device)
+    )
+
+    attn_mask = None
+    keep = torch.cat(keep_parts, dim=0)
+    cur_chunk_keep = build_cur_chunk_keep_mask(cur_key_tokens)
+    if cur_chunk_keep is not None:
+        query_keep = keep.view(1, -1).expand(cur_chunk_keep.shape[0], -1).clone()
+        query_keep[:, cur_key_start : cur_key_start + cur_key_tokens] &= cur_chunk_keep
+        if not bool(query_keep.all()):
+            attn_mask = query_keep.view(1, 1, query_keep.shape[0], query_keep.shape[1])
+    elif not bool(keep.all()):
+        attn_mask = keep.view(1, 1, 1, -1)
+
+    out = torch.zeros_like(q)
+    k_all = torch.cat(k_parts, dim=1)
+    v_all = torch.cat(v_parts, dim=1)
+
+    def attend_cur(q_in, k_in, v_in, mask, compatibility_mode=False):
+        if camera_info is not None:
+            return prope_attention_by_frame_indices(
+                q_in,
+                k_in,
+                v_in,
+                num_heads,
+                camera_info,
+                list(cur_frames),
+                kv_frames,
+                attn_mask=mask,
+                camera_layout=self_attn.prope_camera_layout,
+            )
+        return flash_attention(
+            q_in,
+            k_in,
+            v_in,
+            num_heads,
+            compatibility_mode=compatibility_mode,
+            attn_mask=mask,
+        )
+
+    cur_q = q[:, mosaic_tokens:]
+    cur_out = attend_cur(cur_q, k_all, v_all, attn_mask)
+    out[:, mosaic_tokens:] = cur_out
+
+    if write_cache and cache is not None:
+        cur_k_pre = cur_k_pre.detach()
+        cur_v_raw = cur_v_raw.detach()
+        if cur_positions is None:
+            new_positions = [int(v) for v in list(cur_frames)]
+        else:
+            new_positions = [int(v) for v in list(cur_positions)]
+            if len(new_positions) != len(cur_frames):
+                raise RuntimeError(
+                    "cur_positions length must match cur_frames, "
+                    f"got {len(new_positions)} vs {len(cur_frames)}."
+                )
+        if cur_cache_chunk_ids is None:
+            new_chunk_ids = [-1] * len(cur_frames)
+        else:
+            new_chunk_ids = [int(v) for v in list(cur_cache_chunk_ids)]
+            if len(new_chunk_ids) != len(cur_frames):
+                raise RuntimeError(
+                    "cur_cache_chunk_ids length must match cur_frames, "
+                    f"got {len(new_chunk_ids)} vs {len(cur_frames)}."
+                )
+        if cache.get("k") is None or int(cache["k"].shape[1]) == 0:
+            cache["k"] = cur_k_pre
+            cache["v"] = cur_v_raw
+            cache["positions"] = list(new_positions)
+            cache["frames"] = list(cur_frames)
+            cache["chunk_ids"] = list(new_chunk_ids)
+        else:
+            cache["k"] = torch.cat([cache["k"], cur_k_pre], dim=1)
+            cache["v"] = torch.cat([cache["v"], cur_v_raw], dim=1)
+            cache["positions"] = list(cache.get("positions", cache.get("frames", []))) + list(new_positions)
+            cache["frames"] = list(cache["frames"]) + list(cur_frames)
+            cache["chunk_ids"] = list(cache.get("chunk_ids", [-1] * len(cache.get("frames", [])))) + list(new_chunk_ids)
+
+    return self_attn.o(out)
+
+
 class DiTBlock(nn.Module):
     def __init__(
         self,
@@ -356,6 +634,7 @@ class DiTBlock(nn.Module):
         attn_mask=None,
         camera_info=None,
         cross_attn_keep_mask=None,
+        causal_kv_config=None,
     ):
         has_seq = len(t_mod.shape) == 4
         chunk_dim = 2 if has_seq else 1
@@ -372,15 +651,24 @@ class DiTBlock(nn.Module):
                 scale_mlp.squeeze(2),
                 gate_mlp.squeeze(2),
             )
+        kv_mosaic_tokens = 0
+        frozen_mosaic = None
+        if causal_kv_config is not None:
+            kv_mosaic_tokens = int(causal_kv_config.get("mosaic_tokens", 0) or 0)
+            if kv_mosaic_tokens > 0:
+                frozen_mosaic = x[:, :kv_mosaic_tokens].clone()
+
         input_x = modulate(self.norm1(x), shift_msa, scale_msa)
         camera_info = camera_info if self.use_prope else None
-        x = self.gate(
-            x,
-            gate_msa,
-            self.self_attn(
+        if causal_kv_config is not None:
+            attention_out = causal_self_attention_kv(
+                self.self_attn, input_x, freqs, camera_info, **causal_kv_config
+            )
+        else:
+            attention_out = self.self_attn(
                 input_x, freqs, attn_mask=attn_mask, camera_info=camera_info
-            ),
-        )
+            )
+        x = self.gate(x, gate_msa, attention_out)
         ca = self.cross_attn(self.norm3(x), context)
         if cross_attn_keep_mask is not None:
             ca = ca * cross_attn_keep_mask.to(device=ca.device, dtype=ca.dtype).view(
@@ -389,6 +677,8 @@ class DiTBlock(nn.Module):
         x = x + ca
         input_x = modulate(self.norm2(x), shift_mlp, scale_mlp)
         x = self.gate(x, gate_mlp, self.ffn(input_x))
+        if frozen_mosaic is not None:
+            x = torch.cat([frozen_mosaic, x[:, kv_mosaic_tokens:]], dim=1)
         return x
 
 
