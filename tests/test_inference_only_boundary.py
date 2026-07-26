@@ -12,6 +12,7 @@ INFERENCE_FILES = (
     ROOT / "examples/wanvideo/pipeline/mosaic/causal_inference.py",
     ROOT / "examples/wanvideo/pipeline/mosaic/causal_memory.py",
     ROOT / "examples/wanvideo/pipeline/mosaic/causal_rollout.py",
+    ROOT / "diffsynth/core/data/nonlocal_memory_context.py",
 )
 REMOVED_TRAINING_FILES = (
     ROOT / "examples/wanvideo/model_training/train_mosaic.py",

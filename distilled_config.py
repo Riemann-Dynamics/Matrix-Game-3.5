@@ -28,6 +28,10 @@ class DistilledInferenceConfig:
     memory_mode: str = "c0_plus_generated"
     memory_publish_interval: int = 1
     dynamic_context: bool = True
+    dynamic_context_selection: str = "oldest"
+    nonlocal_memory_context: bool = False
+    context_pose_pool_size: int = 5
+    student_cfg_scale: float = 3.0
     trans_scale: str | float = "logd4"
     mosaic_selection_mode: str = "projection_iou"
     mosaic_candidate_nms_mode: str = "coverage"
@@ -85,6 +89,14 @@ def validate_inference_config(config: DistilledInferenceConfig) -> None:
             raise ValueError("hiar_scales values must be in [0, 1]")
     if config.memory_publish_interval <= 0:
         raise ValueError("memory_publish_interval must be positive")
+    if config.dynamic_context_selection not in {"latest", "oldest"}:
+        raise ValueError(
+            "dynamic_context_selection must be 'latest' or 'oldest'"
+        )
+    if config.context_pose_pool_size <= 0:
+        raise ValueError("context_pose_pool_size must be positive")
+    if config.student_cfg_scale < 1.0:
+        raise ValueError("student_cfg_scale must be >= 1.0")
 
 
 def load_inference_config(path: str | Path) -> DistilledInferenceConfig:

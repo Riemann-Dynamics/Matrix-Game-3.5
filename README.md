@@ -26,8 +26,8 @@ We currently provide two pretrained **5B base (bidirectional) models**, built on
 | `third-person.safetensors` | third-person | protagonist reference images (0–4 crops) |
 
 Both are available in the [Matrix-Game-3.5-Base](https://huggingface.co/RiemannDynamics/Matrix-Game-3.5-Base) HuggingFace repository.
-
-The **distilled real-time autoregressive models** will be released soon! 🚀🚀
+The three-step first-person causal checkpoint will be published in
+[Matrix-Game-3.5-Distilled](https://huggingface.co/RiemannDynamics/Matrix-Game-3.5-Distilled).
 
 ## Requirements
 * One NVIDIA GPU with ≥ 40 GB VRAM (A/H series tested); 704×1280 generation peaks around 40 GB.
@@ -72,6 +72,10 @@ pip install "huggingface_hub[cli]"
 huggingface-cli download RiemannDynamics/Matrix-Game-3.5-Base --local-dir checkpoints/Matrix-Game-3.5-Base
 ln -s Matrix-Game-3.5-Base/first-person.safetensors checkpoints/first-person.safetensors
 ln -s Matrix-Game-3.5-Base/third-person.safetensors checkpoints/third-person.safetensors
+
+# Distilled first-person model (required only by infer_distilled.py)
+huggingface-cli download RiemannDynamics/Matrix-Game-3.5-Distilled --local-dir checkpoints/Matrix-Game-3.5-Distilled
+ln -s Matrix-Game-3.5-Distilled/first-person.safetensors checkpoints/distilled-first-person.safetensors
 
 # 2. Wan2.2-TI2V-5B — provides the T5 text encoder, VAE, DiT scaffold and the
 #    umt5-xxl tokenizer (bundled under google/umt5-xxl); our checkpoints are
@@ -152,10 +156,14 @@ validation video, manifest, or sidecar metadata is read.
 - `hiar-sde`: HiAR next-timestep prefix/context corruption for a HiAR-trained checkpoint.
 - `sink-anchor-context`: online memory with the original C0 anchor used as context.
 
+The released distilled config uses the checkpoint's three-step CFG3 schedule.
+Dynamic context defaults to pose-near/oldest selection. Nonlocal retrieval is
+available through `nonlocal_memory_context: true`, but remains opt-in.
+
 ```bash
 python infer_distilled.py \
     --config configs/infer_distilled.yaml \
-    --checkpoint checkpoints/distilled-stage3.safetensors \
+    --checkpoint checkpoints/distilled-first-person.safetensors \
     --image samples/first_person/case_0/input.png \
     --camera samples/first_person/case_0/camera.npz \
     --prompt-file samples/first_person/case_0/prompt.txt \

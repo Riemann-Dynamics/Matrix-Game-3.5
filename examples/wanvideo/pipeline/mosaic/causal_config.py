@@ -58,7 +58,7 @@ def build_runtime_args(
         "--num_val_batches", "1",
         "--num_validation_blocks", str(config.num_blocks),
         "--validation_num_inference_steps", str(len(config.schedule)),
-        "--validation_cfg_scale", "1.0",
+        "--validation_cfg_scale", str(config.student_cfg_scale),
         "--validation_seed", str(config.seed),
         "--seed", str(config.seed),
         "--trans_scale", str(config.trans_scale),
@@ -94,6 +94,13 @@ def build_runtime_args(
     args.causal_validation_memory_mode = config.memory_mode
     args.causal_generated_memory_publish_interval = config.memory_publish_interval
     args.causal_kv_dynamic_context = config.dynamic_context
+    args.causal_memory_context_selection_policy = (
+        "nonlocal_oldest" if config.nonlocal_memory_context else "legacy"
+    )
+    args.causal_dynamic_context_selection_policy = (
+        config.dynamic_context_selection
+    )
+    args.causal_dynamic_context_pose_pool_size = config.context_pose_pool_size
     args.causal_kv_force_context_original_anchor = profile["force_original_anchor"]
     args.causal_validation_prefix_noise_mode = profile["prefix_noise_mode"]
     args.causal_validation_prefix_noise_dynamic_context = profile[
@@ -102,7 +109,7 @@ def build_runtime_args(
     args.causal_validation_prefix_noise_scales_by_step = config.hiar_scales
     args.causal_dmd_num_steps = len(config.schedule)
     args.causal_dmd_denoising_step_list = config.schedule
-    args.causal_dmd_validation_use_cfg = False
+    args.causal_dmd_validation_use_cfg = config.student_cfg_scale > 1.0
     args.causal_dmd_timestep_wrap = True
     args.causal_dmd_self_memory_da3_process_res = config.da3_process_res
     args.causal_dmd_self_memory_da3_autocast_dtype = config.da3_autocast_dtype

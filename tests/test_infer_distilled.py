@@ -27,6 +27,10 @@ class DistilledConfigTest(unittest.TestCase):
         config = load_inference_config(infer_distilled.DEFAULT_CONFIG)
         self.assertEqual(config.profile, "standard")
         self.assertEqual(config.schedule, (1000, 667, 333))
+        self.assertEqual(config.student_cfg_scale, 3.0)
+        self.assertEqual(config.dynamic_context_selection, "oldest")
+        self.assertFalse(config.nonlocal_memory_context)
+        self.assertEqual(config.context_pose_pool_size, 5)
 
     def test_config_rejects_experiment_keys(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -53,6 +57,18 @@ class DistilledConfigTest(unittest.TestCase):
             path = self._write_config(Path(tmp), hiar_scales=[1.0, 0.5, 0.0])
             with self.assertRaisesRegex(ValueError, "only valid"):
                 load_inference_config(path)
+
+    def test_context_selection_and_cfg_are_validated(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bad_selection = self._write_config(
+                root, dynamic_context_selection="global_oldest"
+            )
+            with self.assertRaisesRegex(ValueError, "dynamic_context_selection"):
+                load_inference_config(bad_selection)
+            bad_cfg = self._write_config(root, student_cfg_scale=0.5)
+            with self.assertRaisesRegex(ValueError, "student_cfg_scale"):
+                load_inference_config(bad_cfg)
 
     def test_profiles_map_to_only_their_intended_policy(self):
         standard = profile_runtime_settings(DistilledInferenceConfig())

@@ -18,6 +18,12 @@ context_selection: per_3latentframe
 memory_mode: c0_plus_generated
 memory_publish_interval: 1
 dynamic_context: true
+# Among the pose-nearest candidates, prefer the oldest context observation.
+dynamic_context_selection: oldest     # oldest | latest
+# Opt-in: exclude memory/context still visible in the rolling KV prefix.
+nonlocal_memory_context: false
+context_pose_pool_size: 5
+student_cfg_scale: 3.0
 
 trans_scale: logd4
 mosaic_selection_mode: projection_iou

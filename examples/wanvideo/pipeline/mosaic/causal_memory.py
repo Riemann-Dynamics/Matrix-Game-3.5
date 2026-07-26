@@ -17,6 +17,11 @@ import numpy as np
 import torch
 
 from diffsynth.core.data.unified_dataset import _load_depth_npz_sparse
+from diffsynth.core.data.nonlocal_memory_context import (
+    normalize_dynamic_context_selection_policy,
+    normalize_memory_context_selection_policy,
+    select_pose_near_oldest,
+)
 from .cleanup import _release_cached_memory, _trim_cpu_allocator
 from .history import (
     _candidate_groups_to_lists,
@@ -634,6 +639,9 @@ class _CausalKVDynamicContextPool:
         noisy_camera_offset=0,
         anchor_latent=None,
         generated_context_publish_interval=1,
+        memory_context_selection_policy="legacy",
+        dynamic_context_selection_policy="oldest",
+        context_pose_pool_size=5,
     ):
         self.initial_entries = list(initial_entries or [])
         self.generated_entries = []
@@ -649,6 +657,17 @@ class _CausalKVDynamicContextPool:
         self.generated_context_publish_interval = max(
             1, int(generated_context_publish_interval or 1)
         )
+        self.memory_context_selection_policy = (
+            normalize_memory_context_selection_policy(
+                memory_context_selection_policy
+            )
+        )
+        self.dynamic_context_selection_policy = (
+            normalize_dynamic_context_selection_policy(
+                dynamic_context_selection_policy
+            )
+        )
+        self.context_pose_pool_size = max(1, int(context_pose_pool_size))
         self.last_rgb_frame = None
 
     def position_for_noisy_index(self, noisy_index):
@@ -664,6 +683,7 @@ class _CausalKVDynamicContextPool:
         *,
         exclude_positions=None,
         exclude_camera_frames=None,
+        max_source_position_exclusive=None,
     ):
         chunk_idx = int(chunk_idx)
         exclude_positions = {
@@ -687,11 +707,14 @@ class _CausalKVDynamicContextPool:
                     "rep_extrinsic": None,
                 }
             ]
-        candidates = [
-            entry
-            for entry in self.initial_entries
-            if int(entry.get("chunk_idx", -999999)) == chunk_idx
-        ]
+        if self.memory_context_selection_policy == "nonlocal_oldest":
+            candidates = list(self.initial_entries)
+        else:
+            candidates = [
+                entry
+                for entry in self.initial_entries
+                if int(entry.get("chunk_idx", -999999)) == chunk_idx
+            ]
         candidates.extend(self.generated_entries)
         if exclude_positions or exclude_camera_frames:
             candidates = [
@@ -700,8 +723,28 @@ class _CausalKVDynamicContextPool:
                 if int(entry.get("position", -999999999)) not in exclude_positions
                 and int(entry.get("camera_frame", -999999999)) not in exclude_camera_frames
             ]
+        if self.memory_context_selection_policy == "nonlocal_oldest":
+            if max_source_position_exclusive is None:
+                raise RuntimeError(
+                    "nonlocal_oldest context selection requires the current "
+                    "rolling-anchor source position."
+                )
+            cutoff = int(max_source_position_exclusive)
+            candidates = [
+                entry
+                for entry in candidates
+                if int(entry.get("source_timeline_position", 2**62)) < cutoff
+            ]
         if not candidates:
             return []
+        if self.dynamic_context_selection_policy == "oldest":
+            selected = select_pose_near_oldest(
+                candidates,
+                target_extrinsics=target_extrinsics,
+                pose_score_fn=_causal_kv_context_pose_score,
+                pose_pool_size=self.context_pose_pool_size,
+            )
+            return [] if selected is None else [selected]
         ranked = sorted(
             candidates,
             key=lambda entry: (
@@ -794,6 +837,7 @@ class _CausalKVDynamicContextPool:
                     "chunk_idx": int(chunk_idx),
                     "latent": latent,
                     "position": self.position_for_noisy_index(global_noisy_index),
+                    "source_timeline_position": int(global_noisy_index),
                     "camera_frame": self.camera_frame_for_noisy_index(global_noisy_index),
                     "rep_extrinsic": extr[block_s + min(1, block_e - block_s - 1)],
                     "extrinsic_block": extr[block_s:block_e],
@@ -839,11 +883,32 @@ def _build_initial_causal_kv_dynamic_context_pool(
     force_context_original_anchor = bool(
         getattr(args, "causal_kv_force_context_original_anchor", False)
     )
+    memory_context_selection_policy = normalize_memory_context_selection_policy(
+        getattr(args, "causal_memory_context_selection_policy", "legacy")
+    )
+    dynamic_context_selection_policy = (
+        normalize_dynamic_context_selection_policy(
+            getattr(args, "causal_dynamic_context_selection_policy", "oldest")
+        )
+    )
+    context_pose_pool_size = max(
+        1,
+        int(
+            getattr(args, "causal_dynamic_context_pose_pool_size", 5)
+            or 5
+        ),
+    )
     if force_context_original_anchor:
+        policy_note = (
+            " Mosaic memory still uses nonlocal_oldest; the context channel "
+            "intentionally overrides retrieval with the C0 sink."
+            if memory_context_selection_policy == "nonlocal_oldest"
+            else ""
+        )
         print(
             "[causal-kv][context][DEBUG] forcing context to the original anchor "
             "latent after a context-free chunk 0. This is a diagnostic-only "
-            "sampling mode.",
+            f"sampling mode.{policy_note}",
             flush=True,
         )
     if bootstrap_mode == "history":
@@ -906,6 +971,9 @@ def _build_initial_causal_kv_dynamic_context_pool(
             noisy_camera_offset=0,
             anchor_latent=initial_anchor_latent,
             generated_context_publish_interval=generated_context_publish_interval,
+            memory_context_selection_policy=memory_context_selection_policy,
+            dynamic_context_selection_policy=dynamic_context_selection_policy,
+            context_pose_pool_size=context_pose_pool_size,
         )
         pool.force_context_original_anchor = bool(force_context_original_anchor)
         pool.last_rgb_frame = np.ascontiguousarray(np.asarray(initial_c0_frames)[-1])
@@ -964,6 +1032,9 @@ def _build_initial_causal_kv_dynamic_context_pool(
             noisy_camera_offset=0,
             anchor_latent=initial_anchor_latent,
             generated_context_publish_interval=generated_context_publish_interval,
+            memory_context_selection_policy=memory_context_selection_policy,
+            dynamic_context_selection_policy=dynamic_context_selection_policy,
+            context_pose_pool_size=context_pose_pool_size,
         )
         pool.force_context_original_anchor = bool(force_context_original_anchor)
         pool.last_rgb_frame = np.ascontiguousarray(np.asarray(initial_c0_frames)[-1])
@@ -1015,6 +1086,9 @@ def _build_initial_causal_kv_dynamic_context_pool(
                 "latent": latents[:, :, idx : idx + 1].contiguous(),
                 "position": int(context_rope_positions[idx]),
                 "rope_actual_time": int(context_actual_times[idx]),
+                "source_timeline_position": (
+                    int(context_actual_times[idx]) - int(anchor_actual_time)
+                ),
                 "camera_frame": int(idx),
                 "source_frame_start": int(block_start),
                 "rep_extrinsic": extr_block[min(1, int(extr_block.shape[0]) - 1)],
@@ -1032,6 +1106,9 @@ def _build_initial_causal_kv_dynamic_context_pool(
         noisy_camera_offset=len(entries),
         anchor_latent=initial_anchor_latent,
         generated_context_publish_interval=generated_context_publish_interval,
+        memory_context_selection_policy=memory_context_selection_policy,
+        dynamic_context_selection_policy=dynamic_context_selection_policy,
+        context_pose_pool_size=context_pose_pool_size,
     )
     pool.force_context_original_anchor = bool(force_context_original_anchor)
     pool.last_rgb_frame = np.ascontiguousarray(np.asarray(initial_c0_frames)[-1])

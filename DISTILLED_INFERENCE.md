@@ -43,12 +43,39 @@ Only inference hyperparameters belong in `configs/infer_distilled.yaml`:
 - `standard`, `hiar-sde`, or `sink-anchor-context` profile;
 - causal chunk/context window;
 - online-memory publication and context selection;
+- student CFG scale;
 - Mosaic selection/fusion settings;
 - DA3 inference resolution and autocast dtype.
 
 Unknown config keys fail immediately. Training keys and experiment paths are
 not accepted. HiAR scales must contain one value per denoising step and are
-valid only for the `hiar-sde` profile. Student CFG remains disabled.
+valid only for the `hiar-sde` profile.
+
+The released first-person checkpoint uses `student_cfg_scale: 3.0`. Set it to
+`1.0` only for an explicit no-CFG ablation.
+
+## Context and nonlocal retrieval
+
+The default is:
+
+```yaml
+dynamic_context: true
+dynamic_context_selection: oldest
+nonlocal_memory_context: false
+context_pose_pool_size: 5
+```
+
+`dynamic_context_selection: oldest` does not choose a globally unrelated old
+frame. It first builds a pose-nearest candidate pool of
+`context_pose_pool_size` entries, then chooses the oldest source-time entry in
+that pool. This favors long-term recall while retaining geometric relevance.
+
+`nonlocal_memory_context: false` preserves normal Mosaic Memory retrieval and
+allows dynamic context to use any published entry. Enabling it activates the
+`nonlocal_oldest` policy from the research implementation: both Mosaic Memory
+and dynamic context exclude sources that are still visible in the bounded
+rolling KV prefix. Dynamic context then applies the same pose-near/oldest
+ranking to the remaining entries.
 
 ## Output
 

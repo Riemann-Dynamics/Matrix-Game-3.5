@@ -12,6 +12,11 @@ import os
 import numpy as np
 import torch
 
+from diffsynth.core.data.nonlocal_memory_context import (
+    normalize_memory_context_selection_policy,
+    rolling_anchor_source_position as _rolling_anchor_source_position,
+    strictly_nonlocal_prefix_count,
+)
 from diffsynth.inference.causal_schedule import (
     hiar_sde_corrupt_clean_latents,
     prepare_causal_dmd_eval_scheduler,
@@ -349,6 +354,9 @@ def _run_causal_kv_rollout(
             flush=True,
         )
     h, w = H_lat // 2, W_lat // 2
+    memory_context_selection_policy = normalize_memory_context_selection_policy(
+        getattr(args, "causal_memory_context_selection_policy", "legacy")
+    )
     validation_memory_mode = _normalize_causal_validation_memory_mode(
         getattr(args, "causal_validation_memory_mode", "c0_plus_generated")
     )
@@ -356,6 +364,14 @@ def _run_causal_kv_rollout(
     validation_gt_memory = validation_memory_mode == "gt"
     validation_c0_only_memory = validation_memory_mode == "c0_only"
     t2v_no_ref = bool(getattr(args, "causal_validation_t2v_no_ref", False))
+    if memory_context_selection_policy == "nonlocal_oldest" and (
+        fixed_initial_anchor or t2v_no_ref
+    ):
+        raise ValueError(
+            "nonlocal_oldest requires the standard advancing rolling anchor; "
+            "it is incompatible with fixed-initial-anchor and no-reference T2V "
+            "validation modes."
+        )
     if fixed_initial_anchor and t2v_no_ref:
         raise ValueError(
             "--causal_validation_fixed_initial_anchor requires an initial C0 "
@@ -703,6 +719,7 @@ def _run_causal_kv_rollout(
     #   c0_only: diagnosis mode, C0/reference memory only, no generated register.
     #   empty: diagnosis mode, pass no mosaic latent and skip memory registration.
     mosaic_query_latents = None
+    mosaic_source_timeline_positions = []
     if use_mosaic:
         if validation_empty_memory:
             print(
@@ -790,6 +807,9 @@ def _run_causal_kv_rollout(
                 mosaic_query_latents = _encode_frames_per_frame(
                     pipe, c0_frames, device, tiled=vae_decode_tiled
                 )
+                mosaic_source_timeline_positions = [
+                    0
+                ] * int(mosaic_query_latents.shape[2])
                 memory_registration_stats["c0_registered"] = True
                 memory_registration_stats["published_rgb_count"] = int(c0_count)
             if validation_c0_only_memory:
@@ -809,6 +829,7 @@ def _run_causal_kv_rollout(
 
     def _publish_pending_generated_memory(force=False):
         nonlocal mosaic_query_latents, published_rgb_count
+        nonlocal mosaic_source_timeline_positions
         if memory_disabled_after_c0_failure:
             pending_generated_memory.clear()
             return
@@ -847,6 +868,22 @@ def _run_causal_kv_rollout(
             else:
                 mosaic_query_latents = torch.cat(
                     [mosaic_query_latents, item["latents"]], dim=2
+                )
+            source_positions = [
+                int(value) for value in item.get("source_timeline_positions", [])
+            ]
+            if len(source_positions) != int(item["latents"].shape[2]):
+                raise RuntimeError(
+                    "validation generated-memory provenance length mismatch: "
+                    f"positions={len(source_positions)}, "
+                    f"latents={int(item['latents'].shape[2])}."
+                )
+            mosaic_source_timeline_positions.extend(source_positions)
+            if memory_context_selection_policy == "nonlocal_oldest":
+                strictly_nonlocal_prefix_count(
+                    mosaic_source_timeline_positions,
+                    max_source_position_exclusive=2**62,
+                    expected_count=int(mosaic_query_latents.shape[2]),
                 )
             published_chunks.append(int(item["chunk_idx"]))
             source = str(item.get("source") or "generated")
@@ -1296,6 +1333,15 @@ def _run_causal_kv_rollout(
         else:
             rolling_anchor_position = int(rolling_positions[0])
             rolling_anchor_camera_frame = int(rolling_camera_frames[0])
+        if fixed_initial_anchor:
+            rolling_anchor_source_position = 0
+        else:
+            rolling_anchor_source_position = _rolling_anchor_source_position(
+                local_chunk_idx=i,
+                frames_per_chunk=cs,
+                window_chunks=ccc,
+                initial_anchor_source_position=0,
+            )
         cur_positions = [
             _noisy_position(idx)
             for idx in range(1 + i * cs, 1 + i * cs + cs)
@@ -1313,13 +1359,32 @@ def _run_causal_kv_rollout(
         mosaic_context_candidate_age_frames = []
         mosaic_context_active_i = False
         mfc = 0
+        eligible_memory_source_count = None
+        if (
+            memory_context_selection_policy == "nonlocal_oldest"
+            and mosaic_query_latents is not None
+        ):
+            eligible_memory_source_count = strictly_nonlocal_prefix_count(
+                mosaic_source_timeline_positions,
+                max_source_position_exclusive=rolling_anchor_source_position,
+                expected_count=int(mosaic_query_latents.shape[2]),
+            )
+        elif mosaic_query_latents is not None:
+            eligible_memory_source_count = int(mosaic_query_latents.shape[2])
         if use_mosaic and validation_empty_memory:
             # Match training nomosaic exactly: no mosaic tokens are prepended.
             m_i = None
             mfc = 0
             m_fr = None
             m_pos = None
-        elif use_mosaic and mosaic_query_latents is not None:
+        elif (
+            use_mosaic
+            and mosaic_query_latents is not None
+            and (
+                memory_context_selection_policy == "legacy"
+                or int(eligible_memory_source_count or 0) > 0
+            )
+        ):
             rgb_start = i * cs * 4
             rgb_end = rgb_start + cs * 4
             # FrustumHandler.align_w2c_trajectory aligns the first query pose to
@@ -1348,18 +1413,33 @@ def _run_causal_kv_rollout(
             local_start = rgb_start - query_window_rgb_start
             local_end = rgb_end - query_window_rgb_start
             query_extrinsics = q_extr_np[local_start:local_end]
-            source_latents = mosaic_query_latents[0].clone()
-            memory_K_arg = _registered_memory_K_for_query(
+            full_source_latents = mosaic_query_latents[0].clone()
+            full_memory_K = _registered_memory_K_for_query(
                 handler,
-                source_latents,
+                full_source_latents,
                 context="[causal-kv]",
             )
+            source_latents = full_source_latents[
+                :, : int(eligible_memory_source_count)
+            ].contiguous()
+            memory_K_arg = full_memory_K[: int(eligible_memory_source_count)]
+            memory_w2c_arg = None
+            memory_depths_arg = None
+            if memory_context_selection_policy == "nonlocal_oldest":
+                memory_w2c_arg = np.asarray(handler.extrinsics)[
+                    : int(eligible_memory_source_count)
+                ]
+                memory_depths_arg = np.asarray(handler.depths)[
+                    : int(eligible_memory_source_count)
+                ]
             query_K_arg = full_noisy_intr[rgb_start:rgb_end].detach().float().cpu().numpy()
             generated_query_kwargs = _generated_memory_query_kwargs_from_args(args)
             queried_result = handler.query_hits_mode_new(
                 device,
                 query_extrinsics,
                 source_latents,
+                w2c=memory_w2c_arg,
+                depths=memory_depths_arg,
                 **generated_query_kwargs,
                 memory_K=memory_K_arg,
                 query_K=query_K_arg,
@@ -1377,7 +1457,11 @@ def _run_causal_kv_rollout(
                     for frame_id in context_candidate_frame_ids[center_group_index]
                     if int(frame_id) >= 0
                 ]
-                newest_registered_frame_id = len(handler.extrinsics) - 1
+                newest_registered_frame_id = (
+                    int(eligible_memory_source_count) - 1
+                    if memory_context_selection_policy == "nonlocal_oldest"
+                    else len(handler.extrinsics) - 1
+                )
                 mosaic_context_candidate_age_frames = [
                     int(newest_registered_frame_id - frame_id)
                     for frame_id in mosaic_context_candidate_frame_ids
@@ -1397,8 +1481,16 @@ def _run_causal_kv_rollout(
                         query_extrinsics=query_extrinsics,
                         candidate_frame_ids=context_candidate_frame_ids,
                         latents=source_latents,
-                        w2c=np.asarray(handler.extrinsics),
-                        depths=np.asarray(handler.depths),
+                        w2c=(
+                            memory_w2c_arg
+                            if memory_w2c_arg is not None
+                            else np.asarray(handler.extrinsics)
+                        ),
+                        depths=(
+                            memory_depths_arg
+                            if memory_depths_arg is not None
+                            else np.asarray(handler.depths)
+                        ),
                         memory_K=memory_K_arg,
                         query_K=query_K_arg,
                         fuse_mode=generated_query_kwargs["fuse_mode"],
@@ -1452,6 +1544,7 @@ def _run_causal_kv_rollout(
                 full_noisy_extr[rgb_start:rgb_end].detach().float().cpu().numpy(),
                 exclude_positions={rolling_anchor_position},
                 exclude_camera_frames={rolling_anchor_camera_frame},
+                max_source_position_exclusive=rolling_anchor_source_position,
             )
         validation_rope_stats["chunks"].append(
             {
@@ -1461,6 +1554,12 @@ def _run_causal_kv_rollout(
                 ),
                 "context_cache_frame_count": int(len(selected_context_entries)),
                 "rolling_anchor_position": int(rolling_anchor_position),
+                "rolling_anchor_source_position": int(
+                    rolling_anchor_source_position
+                ),
+                "eligible_memory_source_count": int(
+                    eligible_memory_source_count or 0
+                ),
                 "noisy_positions": [int(v) for v in cur_positions],
                 "context_positions": [
                     int(entry["position"]) for entry in selected_context_entries
@@ -2290,6 +2389,12 @@ def _run_causal_kv_rollout(
                     "intrinsics": full_noisy_intr[rgb_start:rgb_end].detach().float().cpu().numpy(),
                     "depths": register_depths,
                     "latents": new_query_latents,
+                    "source_timeline_positions": [
+                        1
+                        + int(i) * cs
+                        + min(int(local_index) // 4, max(0, cs - 1))
+                        for local_index in range(int(new_query_latents.shape[2]))
+                    ],
                     "rgb_end": int(rgb_end),
                 }
             )
