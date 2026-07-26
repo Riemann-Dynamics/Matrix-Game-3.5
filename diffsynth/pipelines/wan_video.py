@@ -3096,16 +3096,12 @@ class WanVideoUnit_PropeCamera(PipelineUnit):
         ):
             return {"camera_info": None}
 
-        # Camera-matrix composition runs in fp32 regardless of the model
-        # dtype: K normalization, SE(3) inversion and the P/P_T/P_inv
-        # einsums suffer catastrophic cancellation in bf16 (relative
-        # translations between nearby frames lose 13-32% accuracy). Only
-        # the final products are cast back to ``dtype`` for the attention.
+        # This checkpoint was trained with PRoPE composition in model dtype.
         noisy_intrinsic = self._camera_tensor(
-            noisy_latent_indices_prope_intrinsic, device, torch.float32
+            noisy_latent_indices_prope_intrinsic, device, dtype
         )
         noisy_extrinsic = self._camera_tensor(
-            noisy_latent_indices_prope_extrinsic, device, torch.float32
+            noisy_latent_indices_prope_extrinsic, device, dtype
         )
         intrinsic_parts = []
         extrinsic_parts = []
@@ -3117,10 +3113,10 @@ class WanVideoUnit_PropeCamera(PipelineUnit):
             ):
                 return {"camera_info": None}
             clean_intrinsic = self._camera_tensor(
-                clean_latent_indices_prope_intrinsic, device, torch.float32
+                clean_latent_indices_prope_intrinsic, device, dtype
             )
             clean_extrinsic = self._camera_tensor(
-                clean_latent_indices_prope_extrinsic, device, torch.float32
+                clean_latent_indices_prope_extrinsic, device, dtype
             )
             intrinsic_parts.append(
                 clean_intrinsic[:, : first_frame_count * self.VAE_T_SCALING]
@@ -3157,28 +3153,6 @@ class WanVideoUnit_PropeCamera(PipelineUnit):
         )
 
         w2c = prope_extrinsic.clone()
-        # Recenter the world on the FIRST NOISY camera. PRoPE consumes
-        # only pairwise products P_i P_j^{-1}, which are exactly invariant
-        # to a common world shift (W_i T (W_j T)^{-1} = W_i W_j^{-1}), so
-        # this changes nothing semantically -- but it makes the bf16
-        # quantization of the final matrices act on window-local
-        # translations instead of large absolute world coordinates, which
-        # otherwise wipe out the small inter-frame motion by cancellation.
-        # The reference must be the noisy window (always present, always
-        # window-local), NOT slot 0: with pool history enabled slot 0 is
-        # the OLDEST context camera, which can sit far from the generating
-        # window and would leave the noisy translations large again.
-        # NOTE: the shift-invariance argument above holds for the legacy
-        # linear trans_scale (a global world rescale). For the nonlinear
-        # "log"/"tanh" modes per-frame compression does NOT commute with
-        # world shifts, so the recenter becomes part of the encoding
-        # definition; train and inference stay consistent because both go
-        # through this unit.
-        noisy_first = int(first_frame_count) + int(mosaic_frame_count)
-        c_ref = invert_se3(w2c[:, noisy_first, 0])[..., :3, 3]
-        w2c[..., :3, 3] = w2c[..., :3, 3] + torch.einsum(
-            "bstij,bj->bsti", w2c[..., :3, :3], c_ref
-        )
         w2c[..., :3, 3] = self._apply_trans_scale(w2c[..., :3, 3], trans_scale)
         ks_norm = torch.zeros_like(prope_intrinsic)
         image_width = w * self.VAE_HW_SCALING * 2
@@ -3193,11 +3167,6 @@ class WanVideoUnit_PropeCamera(PipelineUnit):
         p_inv = torch.einsum(
             "...ij,...jk->...ik", invert_se3(w2c), lift_k(invert_k(ks_norm))
         )
-        # fp32 composition done -- hand the attention the model dtype.
-        w2c = w2c.to(dtype)
-        p = p.to(dtype)
-        p_t = p_t.to(dtype)
-        p_inv = p_inv.to(dtype)
         view_change_positions = self._build_view_change_positions(
             use_mosaic_view_change_prope=use_mosaic_view_change_prope,
             mosaic_view_change=mosaic_view_change,

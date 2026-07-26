@@ -107,7 +107,15 @@ class _MaterializeMixin:
             "uint8_or_255",
             "0_255",
         }:
-            return frames.to(device=device, dtype=dtype).mul_(1.0 / 127.5).sub_(1.0)
+            # Match the training repository exactly: RGB decoding normalized
+            # in float32 before the VAE input was cast to BF16. Normalizing
+            # after the cast changes many pixels by one BF16 quantization bin.
+            return (
+                frames.to(device=device, dtype=torch.float32)
+                .mul_(1.0 / 127.5)
+                .sub_(1.0)
+                .to(dtype=dtype)
+            )
         return frames.to(device=device, dtype=dtype)
 
     @staticmethod

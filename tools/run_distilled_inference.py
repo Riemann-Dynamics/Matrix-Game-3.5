@@ -151,7 +151,7 @@ def main(argv=None):
         ],
     )
     args.rank = accelerator.process_index
-    seed = _derive_seed(args.seed, "distilled", accelerator.process_index, 0)
+    seed = _derive_seed(args.seed, "trainer", accelerator.process_index, 0)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)

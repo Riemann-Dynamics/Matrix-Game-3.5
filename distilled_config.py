@@ -28,7 +28,7 @@ class DistilledInferenceConfig:
     memory_mode: str = "c0_plus_generated"
     memory_publish_interval: int = 1
     dynamic_context: bool = True
-    dynamic_context_selection: str = "oldest"
+    dynamic_context_selection: str = "latest"
     nonlocal_memory_context: bool = False
     context_pose_pool_size: int = 5
     student_cfg_scale: float = 3.0

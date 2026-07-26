@@ -32,8 +32,13 @@ def _build_handler(data, args, *, height, width, latent_h, latent_w, estimator):
         )
         == "first_frame"
     )
-    init_k = data["clean_latent_indices_prope_intrinsic"][0].cpu().numpy()
-    init_extrinsic = data["clean_latent_indices_prope_extrinsic"][:1].cpu().numpy()
+    # One WAN latent carries four RGB-frame camera slots. The original
+    # validation/runtime memory bank aligns registration to the anchor suffix,
+    # not to the first sub-frame of that latent.
+    init_k = data["clean_latent_indices_prope_intrinsic"][-1].cpu().numpy()
+    init_extrinsic = (
+        data["clean_latent_indices_prope_extrinsic"][-1:].cpu().numpy()
+    )
     return handler_cls(
         init_k,
         image_size=(int(height), int(width)),

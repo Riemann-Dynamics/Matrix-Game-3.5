@@ -640,7 +640,7 @@ class _CausalKVDynamicContextPool:
         anchor_latent=None,
         generated_context_publish_interval=1,
         memory_context_selection_policy="legacy",
-        dynamic_context_selection_policy="oldest",
+        dynamic_context_selection_policy="latest",
         context_pose_pool_size=5,
     ):
         self.initial_entries = list(initial_entries or [])
@@ -888,7 +888,7 @@ def _build_initial_causal_kv_dynamic_context_pool(
     )
     dynamic_context_selection_policy = (
         normalize_dynamic_context_selection_policy(
-            getattr(args, "causal_dynamic_context_selection_policy", "oldest")
+            getattr(args, "causal_dynamic_context_selection_policy", "latest")
         )
     )
     context_pose_pool_size = max(

@@ -60,7 +60,10 @@ def build_runtime_args(
         "--validation_num_inference_steps", str(len(config.schedule)),
         "--validation_cfg_scale", str(config.student_cfg_scale),
         "--validation_seed", str(config.seed),
-        "--seed", str(config.seed),
+        # Match the released checkpoint's original Stage3 validation runtime.
+        # The public seed controls rollout noise through validation_seed; the
+        # pipeline seed fixes stochastic materialization/model setup.
+        "--seed", "42",
         "--trans_scale", str(config.trans_scale),
         "--mosaic_selection_mode", config.mosaic_selection_mode,
         "--mosaic_candidate_nms_mode", config.mosaic_candidate_nms_mode,
@@ -75,6 +78,7 @@ def build_runtime_args(
         "--validation_mosaic_intrinsics_mode", config.mosaic_intrinsics_mode,
         "--mosaic_fuse_mode", config.mosaic_fuse_mode,
         "--mosaic_fuse_mode_train", config.mosaic_fuse_mode,
+        "--vae_decode_tiled",
         "--dataset_compact_mode",
         "--force_using_input_extrinics",
     ]
