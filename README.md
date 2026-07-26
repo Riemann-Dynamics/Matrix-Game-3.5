@@ -5,7 +5,7 @@
 <h3 align="center">Enhancing Real-Time Streaming Interactive World Models with Patch Memory</h3>
 </div>
 
-<font size=7><div align='center' >  [[🤗 HuggingFace](https://huggingface.co/RiemannDynamics/Matrix-Game-3.5-Base)] [[📖 Technical Report](https://matrix-game-v3-5.github.io/paper/Matrix-Game-3.5.pdf)] [[🚀 Project Website](https://matrix-game-v3-5.github.io/)] </div></font>
+<font size=7><div align='center' >  [[🤗 Base Model](https://huggingface.co/RiemannDynamics/Matrix-Game-3.5-Base)] [[🤗 Distilled Model](https://huggingface.co/RiemannDynamics/Matrix-Game-3.5-Distilled)] [[📖 Technical Report](https://matrix-game-v3-5.github.io/paper/Matrix-Game-3.5.pdf)] [[🚀 Project Website](https://matrix-game-v3-5.github.io/)] </div></font>
 
 
 https://github.com/user-attachments/assets/26d45554-4964-4a71-8e2e-43cb70c28a4c
@@ -29,7 +29,7 @@ Wan2.2-TI2V-5B:
 Both are available in the
 [Matrix-Game-3.5-Base](https://huggingface.co/RiemannDynamics/Matrix-Game-3.5-Base)
 Hugging Face repository. The standard three-step first-person causal checkpoint
-will be published in
+is available in
 [Matrix-Game-3.5-Distilled](https://huggingface.co/RiemannDynamics/Matrix-Game-3.5-Distilled).
 
 ## Requirements
@@ -77,7 +77,7 @@ hf download RiemannDynamics/Matrix-Game-3.5-Base --local-dir checkpoints/Matrix-
 ln -s Matrix-Game-3.5-Base/first-person.safetensors checkpoints/first-person.safetensors
 ln -s Matrix-Game-3.5-Base/third-person.safetensors checkpoints/third-person.safetensors
 
-# 1b. Distilled first-person model (for infer_distilled.py; available after release)
+# 1b. Distilled first-person model (for infer_distilled.py)
 hf download RiemannDynamics/Matrix-Game-3.5-Distilled --local-dir checkpoints/Matrix-Game-3.5-Distilled
 ln -s Matrix-Game-3.5-Distilled/first-person.safetensors checkpoints/distilled-first-person.safetensors
 
