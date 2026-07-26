@@ -1,13 +1,12 @@
 # Distilled causal inference hyperparameters only.
 # Input data, model directories, checkpoint, and output are CLI arguments.
 
-profile: standard                 # standard | hiar-sde | sink-anchor-context
+profile: standard
 height: 704
 width: 1280
 num_blocks: 1
 seed: 3407
 schedule: [1000, 667, 333]
-hiar_scales: []                   # one value per step for hiar-sde, or empty
 
 latent_window_size: 21
 vae_context_blocks: 2

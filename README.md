@@ -18,15 +18,18 @@ https://github.com/user-attachments/assets/26d45554-4964-4a71-8e2e-43cb70c28a4c
 - **Long-horizon real-time distillation**: from a bidirectional diffusion model to a few-step causal generator — Flow Matching in a perceptual feature space jointly learns autoregressive denoising and few-step generation as a strong initialization, then curriculum-style self-rollout DMD progressively distills CFG, camera control and memory conditioning, enabling minute-long, few-step, real-time interactive generation.
 
 ## 🤗 Matrix-Game-3.5 Models
-We currently provide two pretrained **5B base (bidirectional) models**, built on Wan2.2-TI2V-5B:
+We currently provide two pretrained **5B base (bidirectional) models**, built on
+Wan2.2-TI2V-5B:
 
 | Model | Mode | Extra conditioning |
 |---|---|---|
 | `first-person.safetensors` | first-person (egocentric) | — |
 | `third-person.safetensors` | third-person | protagonist reference images (0–4 crops) |
 
-Both are available in the [Matrix-Game-3.5-Base](https://huggingface.co/RiemannDynamics/Matrix-Game-3.5-Base) HuggingFace repository.
-The three-step first-person causal checkpoint will be published in
+Both are available in the
+[Matrix-Game-3.5-Base](https://huggingface.co/RiemannDynamics/Matrix-Game-3.5-Base)
+Hugging Face repository. The standard three-step first-person causal checkpoint
+will be published in
 [Matrix-Game-3.5-Distilled](https://huggingface.co/RiemannDynamics/Matrix-Game-3.5-Distilled).
 
 ## Requirements
@@ -62,28 +65,29 @@ The bundled third-party sources — `diffsynth/` (DiffSynth-based pipeline),
 directly from source: no extra installation or compilation step is needed.
 
 ### Model Download
-Three sets of weights are required. Place (or symlink) them into
-`checkpoints/` under these exact names — no further configuration needed:
+Choose either the base or distilled Matrix-Game checkpoint. Wan2.2-TI2V-5B and
+Depth-Anything-3 are shared dependencies for both inference paths. Place or
+symlink the downloaded files under `checkpoints/` as shown below:
 
 ```bash
-pip install "huggingface_hub[cli]"
+pip install -U huggingface_hub
 
-# 1. Matrix-Game-3.5 base models (ours)
-huggingface-cli download RiemannDynamics/Matrix-Game-3.5-Base --local-dir checkpoints/Matrix-Game-3.5-Base
+# 1a. Matrix-Game-3.5 base models
+hf download RiemannDynamics/Matrix-Game-3.5-Base --local-dir checkpoints/Matrix-Game-3.5-Base
 ln -s Matrix-Game-3.5-Base/first-person.safetensors checkpoints/first-person.safetensors
 ln -s Matrix-Game-3.5-Base/third-person.safetensors checkpoints/third-person.safetensors
 
-# Distilled first-person model (required only by infer_distilled.py)
-huggingface-cli download RiemannDynamics/Matrix-Game-3.5-Distilled --local-dir checkpoints/Matrix-Game-3.5-Distilled
+# 1b. Distilled first-person model (for infer_distilled.py; available after release)
+hf download RiemannDynamics/Matrix-Game-3.5-Distilled --local-dir checkpoints/Matrix-Game-3.5-Distilled
 ln -s Matrix-Game-3.5-Distilled/first-person.safetensors checkpoints/distilled-first-person.safetensors
 
 # 2. Wan2.2-TI2V-5B — provides the T5 text encoder, VAE, DiT scaffold and the
 #    umt5-xxl tokenizer (bundled under google/umt5-xxl); our checkpoints are
 #    DiT weights loaded on top of it
-huggingface-cli download Wan-AI/Wan2.2-TI2V-5B --exclude "assets/*" "examples/*" --local-dir checkpoints/Wan2.2-TI2V-5B
+hf download Wan-AI/Wan2.2-TI2V-5B --exclude "assets/*" "examples/*" --local-dir checkpoints/Wan2.2-TI2V-5B
 
 # 3. Depth-Anything-3 (metric depth for Mosaic Memory)
-huggingface-cli download depth-anything/DA3NESTED-GIANT-LARGE-1.1 --local-dir checkpoints/DA3NESTED-GIANT-LARGE-1.1
+hf download depth-anything/DA3NESTED-GIANT-LARGE-1.1 --local-dir checkpoints/DA3NESTED-GIANT-LARGE-1.1
 ```
 
 ```
@@ -91,17 +95,19 @@ checkpoints/
 ├── Wan2.2-TI2V-5B/              DiT shards + T5 encoder + VAE + tokenizer
 ├── DA3NESTED-GIANT-LARGE-1.1/   depth estimator
 ├── first-person.safetensors     Matrix-Game-3.5 first-person model
-└── third-person.safetensors     Matrix-Game-3.5 third-person model
+├── third-person.safetensors     Matrix-Game-3.5 third-person model
+└── distilled-first-person.safetensors  distilled three-step first-person model
 ```
 
-Custom locations are supported via `--wan-dir / --tokenizer-dir / --da3-dir /
---ckpt` or the env vars `WAN22_TI2V_5B_DIR / UMT5_TOKENIZER_DIR /
-DA3_MODEL_PATH / CKPT_FIRST_PERSON / CKPT_THIRD_PERSON`.
+For custom locations, both entrypoints accept `--wan-dir`, `--tokenizer-dir`,
+and `--da3-dir`. Base inference accepts `--ckpt`; distilled inference requires
+an explicit `--checkpoint`. The shared dependency paths can also be set through
+`WAN22_TI2V_5B_DIR`, `UMT5_TOKENIZER_DIR`, and `DA3_MODEL_PATH`.
 
-### Inference
-`infer.py` is the single entry point. Inputs: an **anchor image**, a **camera
-trajectory**, a **text prompt** — and optionally, for third person,
-**protagonist reference crops**.
+### Base model inference
+Use `infer.py` with an **anchor image**, a **camera trajectory**, and a **text
+prompt**. Third-person inference optionally accepts **protagonist reference
+crops**.
 
 ```bash
 # first person — bundled sample (SANA-WM-Bench scene)
@@ -147,18 +153,11 @@ Results land in `outputs/{first_person,third_person}/<timestamp>/`:
 
 ### Distilled causal inference
 
-Use `infer_distilled.py` for released few-step causal checkpoints. It follows
-the same explicit image/camera/prompt interface as the base model. Inference
-hyperparameters live in `configs/infer_distilled.yaml`; no training run,
-validation video, manifest, or sidecar metadata is read.
-
-- `standard`: clean rolling prefix, online mosaic memory, dynamic context.
-- `hiar-sde`: HiAR next-timestep prefix/context corruption for a HiAR-trained checkpoint.
-- `sink-anchor-context`: online memory with the original C0 anchor used as context.
-
-The released distilled config uses the checkpoint's three-step CFG3 schedule.
-Dynamic context defaults to pose-near/oldest selection. Nonlocal retrieval is
-available through `nonlocal_memory_context: true`, but remains opt-in.
+Use `infer_distilled.py` with the standard three-step first-person causal
+checkpoint. It follows the same explicit image/camera/prompt interface as the
+base model. Use the paired `configs/infer_distilled.yaml` configuration
+unchanged; no training run, validation artifact, manifest, or sidecar metadata
+is required.
 
 ```bash
 python infer_distilled.py \
@@ -170,9 +169,8 @@ python infer_distilled.py \
     --output result.mp4
 ```
 
-Set `profile` in the config to `standard`, `hiar-sde`, or
-`sink-anchor-context`. See [`DISTILLED_INFERENCE.md`](DISTILLED_INFERENCE.md)
-for the complete interface and configuration fields.
+See [`DISTILLED_INFERENCE.md`](DISTILLED_INFERENCE.md) for the input contract
+and complete command-line interface.
 
 **Camera format** (`--camera`): a `.npz` with
 `extrinsics_c2w` — `(N,4,4)` camera-to-world matrices, metric translation —
