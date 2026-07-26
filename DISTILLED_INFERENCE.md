@@ -17,18 +17,20 @@ dependencies as described in the main [README](README.md), then run:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python infer_distilled.py \
-  --config configs/infer_distilled.yaml \
+  --config configs/infer_distilled_6blocks.yaml \
   --checkpoint checkpoints/distilled-first-person.safetensors \
-  --image samples/first_person/case_0/input.png \
-  --camera samples/first_person/case_0/camera.npz \
-  --prompt-file samples/first_person/case_0/prompt.txt \
+  --image samples/distilled/suburban_street_6blocks/input.png \
+  --camera samples/distilled/suburban_street_6blocks/camera.npz \
+  --caption samples/distilled/suburban_street_6blocks/caption.json \
   --output result.mp4
 ```
 
-Use the provided `configs/infer_distilled.yaml` unchanged with its paired
-checkpoint. It contains the checkpoint's resolution, three-step denoising
-schedule, causal window, memory settings, CFG scale, and depth configuration.
-Unknown configuration keys fail immediately.
+The six-block example uses `configs/infer_distilled_6blocks.yaml`. It has the
+same model settings as `configs/infer_distilled.yaml`, with only
+`num_blocks: 6` changed. Use the latter for a one-block smoke test. Both contain
+the checkpoint's resolution, three-step denoising schedule, causal window,
+memory settings, CFG scale, and depth configuration. Unknown configuration
+keys fail immediately.
 
 ## Inputs
 

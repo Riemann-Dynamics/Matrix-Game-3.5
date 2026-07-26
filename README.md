@@ -155,22 +155,26 @@ Results land in `outputs/{first_person,third_person}/<timestamp>/`:
 
 Use `infer_distilled.py` with the standard three-step first-person causal
 checkpoint. It follows the same explicit image/camera/prompt interface as the
-base model. Use the paired `configs/infer_distilled.yaml` configuration
-unchanged; no training run, validation artifact, manifest, or sidecar metadata
+base model. No training run, validation artifact, manifest, or sidecar metadata
 is required.
+
+The repository includes a bundled six-block distilled example:
+
+[![Six-block distilled suburban-street example](samples/distilled/suburban_street_6blocks/preview.jpg)](samples/distilled/suburban_street_6blocks/preview.mp4)
 
 ```bash
 python infer_distilled.py \
-    --config configs/infer_distilled.yaml \
+    --config configs/infer_distilled_6blocks.yaml \
     --checkpoint checkpoints/distilled-first-person.safetensors \
-    --image samples/first_person/case_0/input.png \
-    --camera samples/first_person/case_0/camera.npz \
-    --prompt-file samples/first_person/case_0/prompt.txt \
+    --image samples/distilled/suburban_street_6blocks/input.png \
+    --camera samples/distilled/suburban_street_6blocks/camera.npz \
+    --caption samples/distilled/suburban_street_6blocks/caption.json \
     --output result.mp4
 ```
 
 See [`DISTILLED_INFERENCE.md`](DISTILLED_INFERENCE.md) for the input contract
-and complete command-line interface.
+and complete command-line interface. For a one-block smoke test, use
+`configs/infer_distilled.yaml`.
 
 **Camera format** (`--camera`): a `.npz` with
 `extrinsics_c2w` — `(N,4,4)` camera-to-world matrices, metric translation —
@@ -191,7 +195,8 @@ in pixels of the anchor image. A trajectory shorter than
 
 ## 📜 License
 This project is licensed under the Apache License, Version 2.0 — see [LICENSE](LICENSE).
-Bundled first-person sample assets are from SANA-WM-Bench (CC BY 4.0).
+Bundled assets under `samples/first_person/` are from SANA-WM-Bench
+(CC BY 4.0).
 
 ## 📖 Citation
 If you find this work useful for your research, please kindly cite:
