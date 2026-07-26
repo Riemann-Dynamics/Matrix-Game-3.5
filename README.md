@@ -158,6 +158,11 @@ checkpoint. It follows the same explicit image/camera/prompt interface as the
 base model. No training run, validation artifact, manifest, or sidecar metadata
 is required.
 
+The released student was distilled with CFG scale 3, so distilled inference
+retains conditional and unconditional student forwards at every denoising step.
+The matching scale and negative prompt are explicit in the distilled YAML
+configs; disabling CFG reduces generation quality.
+
 The repository includes a bundled six-block distilled example:
 
 [![Six-block distilled suburban-street example](samples/distilled/suburban_street_6blocks/preview.jpg)](samples/distilled/suburban_street_6blocks/preview.mp4)

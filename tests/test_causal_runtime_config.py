@@ -23,6 +23,7 @@ class CausalRuntimeConfigTests(unittest.TestCase):
         self.assertEqual(args.causal_dynamic_context_selection_policy, "latest")
         self.assertTrue(args.causal_dmd_validation_use_cfg)
         self.assertEqual(args.validation_cfg_scale, 3.0)
+        self.assertEqual(args.validation_negative_prompt, config.negative_prompt)
         self.assertEqual(args.seed, 42)
         self.assertEqual(args.validation_seed, config.seed)
         self.assertTrue(args.vae_decode_tiled)

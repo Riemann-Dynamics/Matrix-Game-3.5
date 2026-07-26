@@ -32,6 +32,13 @@ class DistilledInferenceConfig:
     nonlocal_memory_context: bool = False
     context_pose_pool_size: int = 5
     student_cfg_scale: float = 3.0
+    negative_prompt: str = (
+        "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，"
+        "画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，"
+        "残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，"
+        "毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，"
+        "三条腿，背景人很多，倒着走"
+    )
     trans_scale: str | float = "logd4"
     mosaic_selection_mode: str = "projection_iou"
     mosaic_candidate_nms_mode: str = "coverage"
@@ -97,6 +104,8 @@ def validate_inference_config(config: DistilledInferenceConfig) -> None:
         raise ValueError("context_pose_pool_size must be positive")
     if config.student_cfg_scale < 1.0:
         raise ValueError("student_cfg_scale must be >= 1.0")
+    if config.student_cfg_scale > 1.0 and not config.negative_prompt.strip():
+        raise ValueError("negative_prompt must be non-empty when student CFG is enabled")
 
 
 def load_inference_config(path: str | Path) -> DistilledInferenceConfig:

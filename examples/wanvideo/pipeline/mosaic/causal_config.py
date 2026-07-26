@@ -59,6 +59,7 @@ def build_runtime_args(
         "--num_validation_blocks", str(config.num_blocks),
         "--validation_num_inference_steps", str(len(config.schedule)),
         "--validation_cfg_scale", str(config.student_cfg_scale),
+        "--validation_negative_prompt", config.negative_prompt,
         "--validation_seed", str(config.seed),
         # Match the released checkpoint's original Stage3 validation runtime.
         # The public seed controls rollout noise through validation_seed; the

@@ -32,6 +32,12 @@ the checkpoint's resolution, three-step denoising schedule, causal window,
 memory settings, CFG scale, and depth configuration. Unknown configuration
 keys fail immediately.
 
+The released student was distilled with CFG scale 3 and requires the same CFG
+transition at inference: every denoising step evaluates conditional and
+unconditional student branches and combines them with the configured scale.
+Running it as a conditional-only model changes the learned transition and
+reduces quality. The matching negative prompt is explicit in the YAML config.
+
 ## Inputs
 
 - `--image`: anchor RGB image.
