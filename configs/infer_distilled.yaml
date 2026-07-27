@@ -17,8 +17,8 @@ context_selection: per_3latentframe
 memory_mode: c0_plus_generated
 memory_publish_interval: 1
 dynamic_context: true
-# Match the original training repository's standard pose-nearest ranking.
-dynamic_context_selection: latest     # latest | oldest
+# Among the pose-nearest candidates, prefer the oldest context observation.
+dynamic_context_selection: oldest     # oldest | latest
 # Opt-in: exclude memory/context still visible in the rolling KV prefix.
 nonlocal_memory_context: false
 context_pose_pool_size: 5

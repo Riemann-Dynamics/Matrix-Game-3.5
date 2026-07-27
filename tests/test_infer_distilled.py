@@ -29,7 +29,7 @@ class DistilledConfigTest(unittest.TestCase):
         self.assertEqual(config.schedule, (1000, 667, 333))
         self.assertEqual(config.student_cfg_scale, 3.0)
         self.assertTrue(config.negative_prompt)
-        self.assertEqual(config.dynamic_context_selection, "latest")
+        self.assertEqual(config.dynamic_context_selection, "oldest")
         self.assertFalse(config.nonlocal_memory_context)
         self.assertEqual(config.context_pose_pool_size, 5)
 

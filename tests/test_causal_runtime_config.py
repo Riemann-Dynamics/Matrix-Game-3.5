@@ -20,7 +20,7 @@ class CausalRuntimeConfigTests(unittest.TestCase):
         self.assertEqual(args.candidates_per_query_group_val, 5)
         self.assertEqual(args.causal_dynamic_context_pose_pool_size, 9)
         self.assertEqual(args.causal_memory_context_selection_policy, "legacy")
-        self.assertEqual(args.causal_dynamic_context_selection_policy, "latest")
+        self.assertEqual(args.causal_dynamic_context_selection_policy, "oldest")
         self.assertTrue(args.causal_dmd_validation_use_cfg)
         self.assertEqual(args.validation_cfg_scale, 3.0)
         self.assertEqual(args.validation_negative_prompt, config.negative_prompt)
