@@ -198,11 +198,13 @@ Bundled assets under `samples/first_person/` are from SANA-WM-Bench
 If you find this work useful for your research, please kindly cite:
 
 ```
-  @misc{2026matrixgame35,
-    title={Matrix-Game 3.5: Enhancing Real-Time Streaming Interactive World Models with Patch Memory},
-    author={{Riemann Dynamics}},
-    year={2026},
-    howpublished={Project page},
-    url={https://matrix-game-v3-5.github.io/}
-  }
+  @misc{qian2026matrixgame35enhancingrealtime,
+      title={Matrix-Game 3.5: Enhancing Real-Time Streaming Interactive World Models with Patch Memory}, 
+      author={Runjia Qian and Zile Wang and Jihai Zhang and Kai Zou and Wei Yu and Jiaxing Li and Zexiang Liu and Yaokun Li and Fei Kang and Kaichen Huang and Mengyin An and Haobo Zhang and Biao Jiang and Jiahua Wang and Haofeng Sun and Yang Liu and Yangguang Li},
+      year={2026},
+      eprint={2608.29910},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2608.29910}, 
+    }
 ```
